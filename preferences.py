@@ -258,6 +258,11 @@ class SceneProperties(PropertyGroup):
         items=bed_profile_items,
         default="ENDER3",
     )
+    show_bed_bounds: BoolProperty(
+        name="Show Build Volume",
+        description="Display printer build volume in the 3D Viewport",
+        default=False,
+    )
     bed_size_x: FloatProperty(
         name="Width",
         subtype="DISTANCE",

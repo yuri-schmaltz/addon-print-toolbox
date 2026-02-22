@@ -165,6 +165,7 @@ class VIEW3D_PT_print3d_edit(Sidebar, Panel):
         box.label(text="Build Volume", icon="BBOX")
         row = box.row(align=True)
         row.prop(props, "bed_profile", text="")
+        row.prop(props, "show_bed_bounds", icon="RESTRICT_VIEW_OFF" if props.show_bed_bounds else "RESTRICT_VIEW_ON", text="")
 
         if props.bed_profile == "CUSTOM":
             col = box.column(align=True)

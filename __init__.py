@@ -10,7 +10,7 @@ else:
     import bpy
     from bpy.props import PointerProperty
 
-    from . import essentials, localization, operators, preferences, ui
+    from . import essentials, localization, operators, preferences, ui, draw_volume
 
 
 classes = essentials.get_classes((operators, preferences, ui))
@@ -21,6 +21,9 @@ def register():
         bpy.utils.register_class(cls)
 
     bpy.types.Scene.print3d_toolbox = PointerProperty(type=preferences.SceneProperties)
+
+    if 'draw_volume' in globals():
+        draw_volume.register()
 
     # Translations
     # ---------------------------
@@ -33,6 +36,9 @@ def unregister():
         bpy.utils.unregister_class(cls)
 
     del bpy.types.Scene.print3d_toolbox
+    
+    if 'draw_volume' in globals():
+        draw_volume.unregister()
 
     # Translations
     # ---------------------------
