@@ -100,7 +100,7 @@ class VIEW3D_PT_print3d_analyze(Sidebar, Panel):
         row.prop(props, "angle_nonplanar", text="")
         
         row = col.row(align=True)
-        row.operator("mesh.print3d_check_thick", icon="LINECURVE")
+        row.operator("mesh.print3d_check_thick", icon="LINCURVE")
         row.prop(props, "thickness_min", text="")
         
         row = col.row(align=True)
