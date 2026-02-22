@@ -109,10 +109,26 @@ class MESH_OT_info_area(Operator):
 
 def execute_check(self, context):
     obj = context.active_object
+    props = context.scene.print3d_toolbox
 
     info = []
     self.main_check(obj, info, context)
     report.update(*info)
+
+    # Sync to scene properties for Smart Advisor
+    if info:
+        prop_map = {
+            "mesh.print3d_check_solid": "report_solid",
+            "mesh.print3d_check_intersect": "report_intersections",
+            "mesh.print3d_check_degenerate": "report_degenerate",
+            "mesh.print3d_check_nonplanar": "report_distorted",
+            "mesh.print3d_check_thick": "report_thickness",
+            "mesh.print3d_check_sharp": "report_sharp",
+            "mesh.print3d_check_overhang": "report_overhang",
+        }
+        prop_name = prop_map.get(self.bl_idname)
+        if prop_name:
+            setattr(props, prop_name, " | ".join([item[0] for item in info]))
 
     multiple_obj_warning(self, context)
 
@@ -443,9 +459,26 @@ class MESH_OT_check_all(Operator):
     @staticmethod
     def _check_object(obj: Object, include_data: bool, context) -> list[tuple[str, tuple | None]]:
         info_obj: list[tuple[str, tuple | None]] = []
+        props = context.scene.print3d_toolbox
+        prop_map = {
+            MESH_OT_check_solid: "report_solid",
+            MESH_OT_check_intersections: "report_intersections",
+            MESH_OT_check_degenerate: "report_degenerate",
+            MESH_OT_check_nonplanar: "report_distorted",
+            MESH_OT_check_thick: "report_thickness",
+            MESH_OT_check_sharp: "report_sharp",
+            MESH_OT_check_overhang: "report_overhang",
+        }
 
         for cls in MESH_OT_check_all.check_cls:
+            count_pre = len(info_obj)
             cls.main_check(obj, info_obj, context)
+            
+            # Sync to scene properties
+            prop_name = prop_map.get(cls)
+            if prop_name:
+                results = info_obj[count_pre:]
+                setattr(props, prop_name, " | ".join([item[0] for item in results]))
 
         if include_data:
             return [(f"{obj.name}: {text}", data) for text, data in info_obj]

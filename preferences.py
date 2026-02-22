@@ -148,6 +148,16 @@ class Print3DSceneProperties(PropertyGroup):
         soft_max=256,
     )
 
+    # Results Storage (Hidden)
+    # -------------------------------------
+    report_overhang: StringProperty(name="Overhang Report", default="", options={'HIDDEN'})
+    report_intersections: StringProperty(name="Intersections Report", default="", options={'HIDDEN'})
+    report_solid: StringProperty(name="Solid Report", default="", options={'HIDDEN'})
+    report_thickness: StringProperty(name="Thickness Report", default="", options={'HIDDEN'})
+    report_degenerate: StringProperty(name="Degenerate Report", default="", options={'HIDDEN'})
+    report_distorted: StringProperty(name="Distorted Report", default="", options={'HIDDEN'})
+    report_sharp: StringProperty(name="Sharp Report", default="", options={'HIDDEN'})
+
     # Multi-Object
     # -------------------------------------
 
