@@ -19,14 +19,14 @@ def get_classes(modules: tuple[Any]) -> tuple[type]:
         bpy.types.UIList,
     }
 
-    classes = []
+    classes = set()
 
     for module in modules:
         for cls in module.__dict__.values():
             if isinstance(cls, type):
                 for base in cls.__bases__:
                     if base in bases:
-                        classes.append(cls)
+                        classes.add(cls)
                         break
 
     return tuple(classes)

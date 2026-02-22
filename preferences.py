@@ -28,10 +28,6 @@ BED_PROFILES = {
 }
 
 
-def bed_profile_items(self, _context):
-    return [(key, name, "") for key, (_x, _y, _z, name) in BED_PROFILES.items()]
-
-
 def bed_profile_dimensions(props) -> tuple[float, float, float]:
     if props.bed_profile == "CUSTOM":
         return props.bed_size_x, props.bed_size_y, props.bed_size_z
@@ -43,15 +39,19 @@ def bed_profile_dimensions(props) -> tuple[float, float, float]:
 def _preset_items(self, context):
     if context is None:
         return []
-    addon = context.preferences.addons.get(base_package)
-    if addon is None:
-        return []
     
-    prefs = addon.preferences
-    return [(str(i), preset.name, "") for i, preset in enumerate(prefs.export_presets)]
+    try:
+        addon = context.preferences.addons.get(base_package)
+        if addon is None:
+            return []
+        
+        prefs = addon.preferences
+        return [(str(i), preset.name, "") for i, preset in enumerate(prefs.export_presets)]
+    except Exception:
+        return []
 
 
-class ExportPreset(PropertyGroup):
+class Print3DExportPreset(PropertyGroup):
     name: StringProperty(name="Name", default="Preset")
     export_format: EnumProperty(
         name="Format",
@@ -79,14 +79,14 @@ class ExportPreset(PropertyGroup):
 class Print3DAddonPreferences(AddonPreferences):
     bl_idname = base_package
 
-    export_presets: CollectionProperty(type=ExportPreset)
+    export_presets: CollectionProperty(type=Print3DExportPreset)
     
     def draw(self, context):
         layout = self.layout
         layout.label(text="Export Presets are managed from the 3D Print Toolbox panel.")
 
 
-class SceneProperties(PropertyGroup):
+class Print3DSceneProperties(PropertyGroup):
 
     # Analyze
     # -------------------------------------
@@ -279,7 +279,12 @@ class SceneProperties(PropertyGroup):
     bed_profile: EnumProperty(
         name="Profile",
         description="Select a preset build volume or use a custom size",
-        items=bed_profile_items,
+        items=(
+            ("ENDER3", "Ender 3 (220x220x250mm)", ""),
+            ("PRUSA_MK4", "Prusa MK4 (250x210x220mm)", ""),
+            ("BAMBULAB_P1P", "Bambu Lab P1P (256x256x256mm)", ""),
+            ("CUSTOM", "Custom", ""),
+        ),
         default="ENDER3",
     )
     show_bed_bounds: BoolProperty(

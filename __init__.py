@@ -18,9 +18,13 @@ classes = essentials.get_classes((operators, preferences, ui))
 
 def register():
     for cls in classes:
-        bpy.utils.register_class(cls)
+        try:
+            bpy.utils.register_class(cls)
+        except ValueError:
+            # Already registered as something else? Log it.
+            print(f"Print3D Toolbox: Skipping registration of {cls}, already active.")
 
-    bpy.types.Scene.print3d_toolbox = PointerProperty(type=preferences.SceneProperties)
+    bpy.types.Scene.print3d_toolbox = PointerProperty(type=preferences.Print3DSceneProperties)
 
     if 'draw_volume' in globals():
         draw_volume.register()
@@ -32,10 +36,15 @@ def register():
 
 
 def unregister():
-    for cls in classes:
-        bpy.utils.unregister_class(cls)
+    # Defensive unregistration
+    for cls in reversed(classes if isinstance(classes, (list, tuple)) else list(classes)):
+        try:
+            bpy.utils.unregister_class(cls)
+        except Exception:
+            pass
 
-    del bpy.types.Scene.print3d_toolbox
+    if hasattr(bpy.types.Scene, "print3d_toolbox"):
+        del bpy.types.Scene.print3d_toolbox
     
     if 'draw_volume' in globals():
         draw_volume.unregister()
@@ -43,4 +52,7 @@ def unregister():
     # Translations
     # ---------------------------
 
-    bpy.app.translations.unregister(__package__)
+    try:
+        bpy.app.translations.unregister(__package__)
+    except Exception:
+        pass
