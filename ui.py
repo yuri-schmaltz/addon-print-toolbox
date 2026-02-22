@@ -40,19 +40,37 @@ class VIEW3D_PT_print3d_analyze(Sidebar, Panel):
         if info:
             is_edit = context.edit_object is not None
 
+            layout.separator()
             row = layout.row()
-            row.label(text="Result")
+            row.label(text="Result", icon="OUTLINER_OB_FONT")
             row.operator("wm.print3d_report_clear", text="", icon="X")
 
             box = layout.box()
             col = box.column()
 
             for i, (text, data) in enumerate(info):
+                
+                # Simple heuristic to determine if it's a "Zero issue" check
+                # Text usually looks like "Non-manifold Edges: 0"
+                has_issues = False
+                if ":" in text:
+                    number_part = text.split(":")[-1].strip()
+                    if number_part.isdigit() and int(number_part) > 0:
+                        has_issues = True
+                
+                icon = "ERROR" if has_issues else "CHECKMARK"
+                
+                # Check alert (red line) highlights problematic returns visually
+                row = col.row()
+                row.alert = has_issues
+
                 if is_edit and data and data[1]:
                     bm_type, _bm_array = data
-                    col.operator("mesh.print3d_select_report", text=text, icon=self._type_to_icon[bm_type],).index = i
+                    # Override generic error icon with selection icon if clickable
+                    sel_icon = self._type_to_icon.get(bm_type, icon)
+                    row.operator("mesh.print3d_select_report", text=text, icon=sel_icon).index = i
                 else:
-                    col.label(text=text)
+                    row.label(text=text, icon=icon)
 
     def draw(self, context):
         layout = self.layout
@@ -60,46 +78,54 @@ class VIEW3D_PT_print3d_analyze(Sidebar, Panel):
 
         props = context.scene.print3d_toolbox
 
-        layout.label(text="Statistics")
+        box = layout.box()
+        box.label(text="Statistics", icon="INFO")
+        row = box.row(align=True)
+        row.operator("mesh.print3d_info_volume", text="Volume", icon="MESH_CUBE")
+        row.operator("mesh.print3d_info_area", text="Area", icon="SURFACE_NCURVE")
 
-        row = layout.row(align=True)
-        row.operator("mesh.print3d_info_volume", text="Volume")
-        row.operator("mesh.print3d_info_area", text="Area")
-
-        layout.label(text="Checks")
-
-        col = layout.column(align=True)
-        col.operator("mesh.print3d_check_solid")
-        col.operator("mesh.print3d_check_intersect")
+        box = layout.box()
+        box.label(text="Checks", icon="MODIFIER")
+        col = box.column(align=True)
+        col.operator("mesh.print3d_check_solid", icon="MOD_SOLIDIFY")
+        col.operator("mesh.print3d_check_intersect", icon="UV_FACESEL")
+        
         row = col.row(align=True)
-        row.operator("mesh.print3d_check_degenerate")
+        row.operator("mesh.print3d_check_degenerate", icon="SNAP_VERTEX")
         row.prop(props, "threshold_zero", text="")
+        
         row = col.row(align=True)
-        row.operator("mesh.print3d_check_nonplanar")
+        row.operator("mesh.print3d_check_nonplanar", icon="SNAP_FACE")
         row.prop(props, "angle_nonplanar", text="")
+        
         row = col.row(align=True)
-        row.operator("mesh.print3d_check_thick")
+        row.operator("mesh.print3d_check_thick", icon="LINECURVE")
         row.prop(props, "thickness_min", text="")
+        
         row = col.row(align=True)
-        row.operator("mesh.print3d_check_sharp")
+        row.operator("mesh.print3d_check_sharp", icon="MOD_BEVEL")
         row.prop(props, "angle_sharp", text="")
+        
         row = col.row(align=True)
-        row.operator("mesh.print3d_check_overhang")
+        row.operator("mesh.print3d_check_overhang", icon="FILE_PARENT")
         row.prop(props, "angle_overhang", text="")
+        
+        box.separator()
+        box.operator("mesh.print3d_check_all", icon="RIGHTARROW_THIN")
 
-        layout.label(text="Orientation")
-        row = layout.row(align=True)
-        row.operator("object.print3d_optimize_overhang", text="Optimize Overhang")
+        box = layout.box()
+        box.label(text="Orientation", icon="ORIENTATION_GIMBAL")
+        row = box.row(align=True)
+        row.operator("object.print3d_optimize_overhang", text="Optimize Overhang", icon="PLAY")
         row.prop(props, "overhang_optimize_angle", text="")
         row.prop(props, "overhang_optimize_iterations", text="")
 
-        layout.operator("mesh.print3d_check_all")
-
-        layout.separator()
-        layout.label(text="Multi-Object")
-        row = layout.row(align=True)
+        box = layout.box()
+        box.label(text="Multi-Object", icon="SCENE_DATA")
+        row = box.row(align=True)
         row.prop(props, "analyze_selected_objects")
-        row = layout.row(align=True)
+        
+        row = box.row(align=True)
         row.prop(props, "use_assembly_tolerance")
         row.prop(props, "assembly_tolerance", text="")
 
@@ -113,7 +139,9 @@ class VIEW3D_PT_print3d_cleanup(Sidebar, Panel):
     def draw(self, context):
         layout = self.layout
         layout.enabled = _is_mesh(context.object)
-        layout.operator("mesh.print3d_clean_non_manifold")
+        
+        box = layout.box()
+        box.operator("mesh.print3d_clean_non_manifold", icon="BRUSH_DATA")
 
 
 class VIEW3D_PT_print3d_edit(Sidebar, Panel):
@@ -125,37 +153,40 @@ class VIEW3D_PT_print3d_edit(Sidebar, Panel):
         is_mesh = _is_mesh(context.object)
         props = context.scene.print3d_toolbox
 
-        layout.operator("mesh.print3d_hollow")
+        box = layout.box()
+        box.label(text="Transform", icon="NONE")
+        box.operator("mesh.print3d_hollow", icon="MOD_THICKNESS")
 
-        row = layout.row()
+        row = box.row()
         row.enabled = is_mesh
-        row.operator("object.print3d_align_xy")
+        row.operator("object.print3d_align_xy", icon="CON_ROTLIKE")
 
-        layout.label(text="Build Volume")
-        row = layout.row(align=True)
+        box = layout.box()
+        box.label(text="Build Volume", icon="BBOX")
+        row = box.row(align=True)
         row.prop(props, "bed_profile", text="")
 
         if props.bed_profile == "CUSTOM":
-            col = layout.column(align=True)
+            col = box.column(align=True)
             col.enabled = is_mesh
             col.prop(props, "bed_size_x")
             col.prop(props, "bed_size_y")
             col.prop(props, "bed_size_z")
         else:
             dims = bed_profile_dimensions(props)
-            layout.label(text=tip_("Preset: {} x {} x {} mm").format(*[round(v, 2) for v in dims]))
+            box.label(text=tip_("Preset: {} x {} x {} mm").format(*[round(v, 2) for v in dims]), icon="INFO")
 
-        row = layout.row(align=True)
+        row = box.row(align=True)
         row.enabled = is_mesh
-        row.operator("object.print3d_check_bed_fit", text="Check Fit")
-        op = row.operator("object.print3d_check_bed_fit", text="Auto Scale to Fit")
+        row.operator("object.print3d_check_bed_fit", text="Check Fit", icon="ZOOM_ALL")
+        op = row.operator("object.print3d_check_bed_fit", text="Auto Scale to Fit", icon="FULLSCREEN_ENTER")
         op.auto_scale = True
 
         if props.bed_report:
-            box = layout.box()
-            box.label(text="Build Volume Report")
+            report_box = box.box()
+            report_box.label(text="Build Volume Report", icon="OUTLINER_OB_FONT")
             for line in props.bed_report.splitlines():
-                row = box.row()
+                row = report_box.row()
                 if line.startswith("X:"):
                     row.alert = props.bed_axis_overflow[0]
                 elif line.startswith("Y:"):
@@ -164,11 +195,12 @@ class VIEW3D_PT_print3d_edit(Sidebar, Panel):
                     row.alert = props.bed_axis_overflow[2]
                 row.label(text=line)
 
-        layout.label(text="Scale To")
-        row = layout.row(align=True)
+        box = layout.box()
+        box.label(text="Scale To", icon="ARROW_LEFTRIGHT")
+        row = box.row(align=True)
         row.enabled = is_mesh
-        row.operator("mesh.print3d_scale_to_volume", text="Volume")
-        row.operator("mesh.print3d_scale_to_bounds", text="Bounds")
+        row.operator("mesh.print3d_scale_to_volume", text="Volume", icon="MESH_CUBE")
+        row.operator("mesh.print3d_scale_to_bounds", text="Bounds", icon="VIEWORTHO")
 
 
 class VIEW3D_PT_print3d_export(Sidebar, Panel):
