@@ -8,6 +8,7 @@ from bpy.types import Object, Panel
 
 from . import report
 from .preferences import bed_profile_dimensions
+from .operators import advisor
 
 
 def _is_mesh(ob: Object) -> bool:
@@ -202,6 +203,37 @@ class VIEW3D_PT_print3d_edit(Sidebar, Panel):
         row.enabled = is_mesh
         row.operator("mesh.print3d_scale_to_volume", text="Volume", icon="MESH_CUBE")
         row.operator("mesh.print3d_scale_to_bounds", text="Bounds", icon="VIEWORTHO")
+
+
+class VIEW3D_PT_print3d_advisor(Sidebar, Panel):
+    bl_label = "Smart Advisor (Beta)"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.enabled = _is_mesh(context.object)
+        
+        box = layout.box()
+        box.label(text="Design Suggestions", icon="LIGHTBULB_ON")
+        box.operator("mesh.print3d_advisor_analyze", text="Analyze Mesh for DfAM", icon="NODETREE")
+        
+        suggestions = advisor.get_suggestions()
+        
+        if suggestions:
+            layout.separator()
+            for sug in suggestions:
+                sbox = layout.box()
+                row = sbox.row()
+                row.label(text=sug["message"], icon=sug["icon"])
+                
+                # Highlight priority
+                if sug["priority"] == "HIGH":
+                    row.label(text="", icon="ERROR")
+                
+                row = sbox.row()
+                row.operator(sug["operator_id"], text="Apply Suggestion", icon="CHECKMARK")
+        else:
+            layout.label(text="Run analysis to see suggestions", icon="INFO")
 
 
 class VIEW3D_PT_print3d_export(Sidebar, Panel):

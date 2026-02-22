@@ -5,3 +5,4 @@ from .analyze import *
 from .cleanup import *
 from .edit import *
 from .export import *
+from .advisor import *

@@ -160,6 +160,10 @@ def bmesh_check_thick_object(obj: Object, thickness: float, context) -> MutableS
     bm_faces_new = bm.faces[:]
     num_faces = len(bm_faces_new)
     
+    if num_faces == 0:
+        bm.free()
+        return array.array("i", [])
+
     # Optimization: tune chunk size based on face count
     cpu_count = os.cpu_count() or 4
     chunk_size = max(100, num_faces // (cpu_count * 4))

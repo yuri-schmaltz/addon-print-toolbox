@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 id = "print3d_toolbox"
 name = "3D Print Toolbox"
-version = "1.4.1"
+version = "1.5.0"
 tagline = "Utilities for 3D printing"
 maintainer = "Mikhail Rachinskiy"
 type = "add-on"
