@@ -58,12 +58,23 @@ class MESH_OT_clean_non_manifold(Operator):
 
     @staticmethod
     def elem_count(context):
+        """Count vertices, edges, and faces in the active edit mesh.
+
+        Args:
+            context: The execution context containing the active object.
+            
+        Returns:
+            tuple[int, int, int]: Vertices, edges, and faces counts.
+        """
         bm = bmesh.from_edit_mesh(context.edit_object.data)
         return len(bm.verts), len(bm.edges), len(bm.faces)
 
     @staticmethod
     def setup_environment():
-        """set the mode as edit, select mode as vertices, and reveal hidden vertices"""
+        """Prepare view environment for mesh topology cleanup.
+        
+        Forces Edit Mode, Vertex selection masking, and unhides all elements.
+        """
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_mode(type="VERT")
         bpy.ops.mesh.reveal()
@@ -108,7 +119,10 @@ class MESH_OT_clean_non_manifold(Operator):
         bm_key = cls.elem_count(context)
         bm_states.add(bm_key)
 
-        while True:
+        MAX_ITERATIONS = 100
+        iterations = 0
+
+        while iterations < MAX_ITERATIONS:
             cls.fill_non_manifold(sides)
             cls.delete_newly_generated_non_manifold_verts()
 
@@ -117,6 +131,11 @@ class MESH_OT_clean_non_manifold(Operator):
                 break
             else:
                 bm_states.add(bm_key)
+            
+            iterations += 1
+            
+        if iterations == MAX_ITERATIONS:
+            print("Print3D Toolbox: Make Manifold reached maximum iterations (100) and aborted early to prevent hang.")
 
     @staticmethod
     def select_non_manifold_verts(

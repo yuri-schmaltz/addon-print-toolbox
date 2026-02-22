@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+__cache__.pickle
+addon-print-toolbox.code-workspace
+test_*.py

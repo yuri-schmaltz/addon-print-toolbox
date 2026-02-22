@@ -137,7 +137,7 @@ def _bmesh_face_points_random(f: BMFace, num_points=1, margin=0.05) -> Iterator[
         yield vecs[0] + u1 * side1 + u2 * side2
 
 
-def bmesh_check_thick_object(obj: Object, thickness: float) -> MutableSequence[int]:
+def bmesh_check_thick_object(obj: Object, thickness: float, context) -> MutableSequence[int]:
     # Triangulate
     bm = bmesh_copy_from_object(obj, transform=True, triangulate=False)
 
@@ -151,7 +151,6 @@ def bmesh_check_thick_object(obj: Object, thickness: float) -> MutableSequence[i
     # Convert new/old map to index dict.
 
     # Create a real mesh (lame!)
-    context = bpy.context
     layer = context.view_layer
     scene_collection = context.layer_collection.collection
 
@@ -161,40 +160,42 @@ def bmesh_check_thick_object(obj: Object, thickness: float) -> MutableSequence[i
     scene_collection.objects.link(obj_tmp)
 
     layer.update()
-    ray_cast = obj_tmp.ray_cast
 
-    EPS_BIAS = 0.0001
+    try:
+        ray_cast = obj_tmp.ray_cast
 
-    faces_error = set()
-    bm_faces_new = bm.faces[:]
+        EPS_BIAS = 0.0001
 
-    for f in bm_faces_new:
-        no = f.normal
-        no_sta = no * EPS_BIAS
-        no_end = no * thickness
-        for p in _bmesh_face_points_random(f, num_points=6):
-            # Cast the ray backwards
-            p_a = p - no_sta
-            p_b = p - no_end
-            p_dir = p_b - p_a
+        faces_error = set()
+        bm_faces_new = bm.faces[:]
 
-            ok, _co, no, index = ray_cast(p_a, p_dir, distance=p_dir.length)
+        for f in bm_faces_new:
+            no = f.normal
+            no_sta = no * EPS_BIAS
+            no_end = no * thickness
+            for p in _bmesh_face_points_random(f, num_points=6):
+                # Cast the ray backwards
+                p_a = p - no_sta
+                p_b = p - no_end
+                p_dir = p_b - p_a
 
-            if ok:
-                # Add the face we hit
-                for f_iter in (f, bm_faces_new[index]):
-                    # if the face wasn't triangulated, just use existing
-                    f_org = face_map.get(f_iter, f_iter)
-                    f_org_index = face_index_map_org[f_org]
-                    faces_error.add(f_org_index)
+                ok, _co, no, index = ray_cast(p_a, p_dir, distance=p_dir.length)
 
-    bm.free()
+                if ok:
+                    # Add the face we hit
+                    for f_iter in (f, bm_faces_new[index]):
+                        # if the face wasn't triangulated, just use existing
+                        f_org = face_map.get(f_iter, f_iter)
+                        f_org_index = face_index_map_org[f_org]
+                        faces_error.add(f_org_index)
 
-    scene_collection.objects.unlink(obj_tmp)
-    bpy.data.objects.remove(obj_tmp)
-    bpy.data.meshes.remove(me_tmp)
+        bm.free()
+    finally:
+        scene_collection.objects.unlink(obj_tmp)
+        bpy.data.objects.remove(obj_tmp)
+        bpy.data.meshes.remove(me_tmp)
 
-    layer.update()
+        layer.update()
 
     return array.array("i", faces_error)
 

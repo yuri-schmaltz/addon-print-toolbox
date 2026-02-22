@@ -168,6 +168,15 @@ class OBJECT_OT_align_xy(Operator):
     )
 
     def execute(self, context):
+        """Perform object alignment rotation using face normal weighting.
+        
+        Calculates the average normal of selected faces and rotates the 
+        object world matrix via pure Quaternion decomposition. This ensures 
+        existing scale and positional data remains intact.
+        
+        Args:
+            context: The execution context containing selected objects.
+        """
         # FIXME: Undo is inconsistent.
         # FIXME: Would be nicer if rotate could pick some object-local axis.
 
@@ -203,13 +212,27 @@ class OBJECT_OT_align_xy(Operator):
             else:
                 for face in faces:
                     normal += face.normal
+                    
+            if normal.length_squared < 1e-6:
+                skip_invalid.append(obj.name)
+                continue
+                
             normal = normal.normalized()
             normal.rotate(obj.matrix_world)  # local -> world.
-            offset = normal.rotation_difference(Vector((0.0, 0.0, -1.0)))
-            offset = offset.to_matrix().to_4x4()
-            obj.matrix_world = offset @ obj.matrix_world
-            obj.scale = orig_scale
-            obj.location = orig_loc
+            
+            # Decompose current matrix to extract pure rotation
+            loc, rot, scale = obj.matrix_world.decompose()
+            
+            offset_quat = normal.rotation_difference(Vector((0.0, 0.0, -1.0)))
+            
+            # Pre-multiply offset by current rotation
+            new_rot = offset_quat @ rot
+            
+            # Recompose the matrix without modifying original translation and scale
+            # To handle non-uniform scale correctly, we construct a 4x4 matrix from parts
+            from mathutils import Matrix
+            new_mat = Matrix.LocRotScale(loc, new_rot, scale)
+            obj.matrix_world = new_mat
 
         if len(skip_invalid) > 0:
             for name in skip_invalid:
@@ -353,6 +376,11 @@ class MESH_OT_scale_to_volume(Operator):
 
     def execute(self, context):
         from .. import lib
+        
+        if self.volume_init <= 1e-6:
+            self.report({"WARNING"}, "Object original volume is too small or invalid for scaling")
+            return {"CANCELLED"}
+            
         scale = math.pow(self.volume, 1 / 3) / math.pow(self.volume_init, 1 / 3)
         scale_fmt = lib.clean_float(scale, 6)
         self.report({"INFO"}, tip_("Scaled by {}").format(scale_fmt))
@@ -409,6 +437,10 @@ class MESH_OT_scale_to_bounds(Operator):
     )
 
     def execute(self, context):
+        if self.length_init <= 1e-6:
+            self.report({"WARNING"}, "Object original bounds are too small for scaling")
+            return {"CANCELLED"}
+            
         scale = self.length / self.length_init
         axis = "XYZ"[self.axis_init]
         _scale(scale, report=self.report, report_suffix=tip_(", Clamping {}-Axis").format(axis))

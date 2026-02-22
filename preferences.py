@@ -3,16 +3,18 @@
 # SPDX-FileCopyrightText: 2016-2025 Mikhail Rachinskiy
 
 import math
+import bpy
 
 from bpy.props import (
     BoolProperty,
     BoolVectorProperty,
+    CollectionProperty,
     EnumProperty,
     FloatProperty,
     IntProperty,
     StringProperty,
 )
-from bpy.types import PropertyGroup
+from bpy.types import AddonPreferences, PropertyGroup
 
 from . import __package__ as base_package
 from . import report
@@ -36,6 +38,44 @@ def bed_profile_dimensions(props) -> tuple[float, float, float]:
 
     x, y, z, _label = BED_PROFILES[props.bed_profile]
     return x, y, z
+
+
+def _preset_items(self, context):
+    if context is None:
+        return []
+    addon = context.preferences.addons.get(base_package)
+    if addon is None:
+        return []
+    
+    prefs = addon.preferences
+    return [(str(i), preset.name, "") for i, preset in enumerate(prefs.export_presets)]
+
+
+class ExportPreset(PropertyGroup):
+    name: StringProperty(name="Name", default="Preset")
+    export_format: EnumProperty(
+        name="Format",
+        items=(("OBJ", "OBJ", ""), ("PLY", "PLY", ""), ("STL", "STL", ""), ("3MF", "3MF", "")),
+        default="STL",
+    )
+    use_ascii_format: BoolProperty(name="ASCII")
+    use_scene_scale: BoolProperty(name="Scene Scale")
+    use_copy_textures: BoolProperty(name="Copy Textures")
+    use_uv: BoolProperty(name="UVs")
+    use_normals: BoolProperty(name="Normals")
+    use_colors: BoolProperty(name="Colors")
+    use_3mf_materials: BoolProperty(name="Materials", default=True)
+    use_3mf_units: BoolProperty(name="Units", default=True)
+
+
+class Print3DAddonPreferences(AddonPreferences):
+    bl_idname = base_package
+
+    export_presets: CollectionProperty(type=ExportPreset)
+    
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="Export Presets are managed from the 3D Print Toolbox panel.")
 
 
 class SceneProperties(PropertyGroup):
@@ -98,6 +138,33 @@ class SceneProperties(PropertyGroup):
         default=48,
         min=1,
         soft_max=256,
+    )
+
+    # Multi-Object
+    # -------------------------------------
+
+    analyze_selected_objects: BoolProperty(
+        name="All Selected",
+        description="Analyze all selected mesh objects",
+        default=False,
+    )
+    use_assembly_tolerance: BoolProperty(
+        name="Assembly Tolerance",
+        description="Check clearance between selected objects",
+        default=False,
+    )
+    assembly_tolerance: FloatProperty(
+        name="Tolerance",
+        subtype="DISTANCE",
+        default=0.0001,
+        min=0.0,
+        precision=4,
+        step=0.01,
+    )
+    apply_tolerance_on_export: BoolProperty(
+        name="Apply Tolerance on Export",
+        description="Scale down export to account for assembly tolerance",
+        default=False,
     )
 
     # Export

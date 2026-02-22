@@ -111,7 +111,7 @@ def execute_check(self, context):
     obj = context.active_object
 
     info = []
-    self.main_check(obj, info)
+    self.main_check(obj, info, context)
     report.update(*info)
 
     multiple_obj_warning(self, context)
@@ -131,7 +131,7 @@ class MESH_OT_check_solid(Operator):
     bl_description = "Check for geometry is solid (has valid inside/outside) and correct normals"
 
     @staticmethod
-    def main_check(obj: Object, info: list):
+    def main_check(obj: Object, info: list, _context):
         import array
         from .. import lib
 
@@ -157,7 +157,7 @@ class MESH_OT_check_intersections(Operator):
     bl_description = "Check for self intersections"
 
     @staticmethod
-    def main_check(obj: Object, info: list):
+    def main_check(obj: Object, info: list, _context):
         from .. import lib
 
         faces_intersect = lib.bmesh_check_self_intersect_object(obj)
@@ -173,11 +173,11 @@ class MESH_OT_check_degenerate(Operator):
     bl_description = "Check for zero area faces and zero length edges"
 
     @staticmethod
-    def main_check(obj: Object, info: list):
+    def main_check(obj: Object, info: list, context):
         import array
         from .. import lib
 
-        threshold = bpy.context.scene.print3d_toolbox.threshold_zero
+        threshold = context.scene.print3d_toolbox.threshold_zero
 
         bm = lib.bmesh_copy_from_object(obj, transform=False, triangulate=False)
 
@@ -199,11 +199,11 @@ class MESH_OT_check_nonplanar(Operator):
     bl_description = "Check for non-flat faces"
 
     @staticmethod
-    def main_check(obj: Object, info: list):
+    def main_check(obj: Object, info: list, context):
         import array
         from .. import lib
 
-        angle_nonplanar = bpy.context.scene.print3d_toolbox.angle_nonplanar
+        angle_nonplanar = context.scene.print3d_toolbox.angle_nonplanar
 
         bm = lib.bmesh_copy_from_object(obj, transform=True, triangulate=False)
         bm.normal_update()
@@ -224,12 +224,12 @@ class MESH_OT_check_thick(Operator):
     bl_description = "Check for wall thickness below specified value"
 
     @staticmethod
-    def main_check(obj: Object, info: list):
+    def main_check(obj: Object, info: list, context):
         from .. import lib
 
-        thickness_min = bpy.context.scene.print3d_toolbox.thickness_min
+        thickness_min = context.scene.print3d_toolbox.thickness_min
 
-        faces_error = lib.bmesh_check_thick_object(obj, thickness_min)
+        faces_error = lib.bmesh_check_thick_object(obj, thickness_min, context)
         info.append((tip_("Thin Faces: {}").format(len(faces_error)), (BMFace, faces_error)))
 
     def execute(self, context):
@@ -242,10 +242,10 @@ class MESH_OT_check_sharp(Operator):
     bl_description = "Check for edges sharper than a specified angle"
 
     @staticmethod
-    def main_check(obj: Object, info: list):
+    def main_check(obj: Object, info: list, context):
         from .. import lib
 
-        angle_sharp = bpy.context.scene.print3d_toolbox.angle_sharp
+        angle_sharp = context.scene.print3d_toolbox.angle_sharp
 
         bm = lib.bmesh_copy_from_object(obj, transform=True, triangulate=False)
         bm.normal_update()
@@ -268,11 +268,11 @@ class MESH_OT_check_overhang(Operator):
     bl_description = "Check for faces that overhang past a specified angle"
 
     @staticmethod
-    def main_check(obj: Object, info: list):
+    def main_check(obj: Object, info: list, context):
         from mathutils import Vector
         from .. import lib
 
-        angle_overhang = (math.pi / 2.0) - bpy.context.scene.print3d_toolbox.angle_overhang
+        angle_overhang = (math.pi / 2.0) - context.scene.print3d_toolbox.angle_overhang
 
         if angle_overhang == math.pi:
             info.append(("Skipping Overhang", ()))
@@ -408,11 +408,11 @@ class MESH_OT_check_all(Operator):
     )
 
     @staticmethod
-    def _check_object(obj: Object, include_data: bool) -> list[tuple[str, tuple | None]]:
+    def _check_object(obj: Object, include_data: bool, context) -> list[tuple[str, tuple | None]]:
         info_obj: list[tuple[str, tuple | None]] = []
 
         for cls in MESH_OT_check_all.check_cls:
-            cls.main_check(obj, info_obj)
+            cls.main_check(obj, info_obj, context)
 
         if include_data:
             return [(f"{obj.name}: {text}", data) for text, data in info_obj]
@@ -474,7 +474,7 @@ class MESH_OT_check_all(Operator):
             info_batch: list[tuple[str, tuple | None]] = []
             for ob in selected:
                 include_data = ob == obj
-                info_batch.extend(self._check_object(ob, include_data))
+                info_batch.extend(self._check_object(ob, include_data, context))
 
             if props.use_assembly_tolerance:
                 info_batch.extend(self._assembly_clearance_info(selected, props.assembly_tolerance))
@@ -483,7 +483,7 @@ class MESH_OT_check_all(Operator):
         else:
             info = []
             for cls in self.check_cls:
-                cls.main_check(obj, info)
+                cls.main_check(obj, info, context)
 
             report.update(*info)
 

@@ -128,6 +128,8 @@ class EXPORT_SCENE_OT_export(Operator):
         else:
             blend_name = data_("Untitled")
 
+        # Ensure blend_name is also safe just in case
+        blend_name = re.sub(r'[\\/:*?"<>|]', "", blend_name)
         filename = f"{blend_name}-{ob_name}.{props.export_format.lower()}"
 
         if bpy.data.is_saved or (props.export_path and not props.export_path.startswith("//")):
@@ -182,7 +184,8 @@ def _image_copy_guess(filepath: str, objects: list[Object]) -> None:
 
             try:
                 shutil.copy(imagepath, imagepath_dst)
-            except:
+            except Exception as exc:
+                print(f"Error copying texture: {exc}")
                 import traceback
                 traceback.print_exc()
 
