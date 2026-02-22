@@ -217,7 +217,11 @@ class VIEW3D_PT_print3d_export(Sidebar, Panel):
 
         layout.prop(props, "export_path", text="")
         layout.prop(props, "export_format")
-        layout.prop(props, "export_preset")
+        
+        row = layout.row(align=True)
+        row.prop(props, "export_preset")
+        row.operator("wm.print3d_preset_add", text="", icon="ADD")
+        row.operator("wm.print3d_preset_remove", text="", icon="REMOVE")
 
         layout.operator("export_scene.print3d_export", icon="EXPORT")
 
@@ -238,6 +242,12 @@ class VIEW3D_PT_print3d_export(Sidebar, Panel):
 
             col = panel.column(heading="Materials")
             col.prop(props, "use_copy_textures")
+
+            col = panel.column(heading="Mesh Optimization")
+            col.prop(props, "use_export_decimate")
+            sub = col.column()
+            sub.active = props.use_export_decimate
+            sub.prop(props, "export_decimate_ratio", text="Ratio")
 
             col = panel.column(heading="3MF")
             col.active = props.export_format == "3MF"

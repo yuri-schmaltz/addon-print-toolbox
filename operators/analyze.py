@@ -313,6 +313,26 @@ class OBJECT_OT_optimize_overhang(Operator):
             yield Euler((pitch, 0.0, yaw)).to_quaternion()
 
     @staticmethod
+    def _overhang_score_fast(normals: list[Vector], quat: Matrix, limit_angle: float) -> tuple[int, float]:
+        """Calculate overhang score using vector math instead of mesh transformation."""
+        # Rotating the target vector by inverse rotation is equivalent to rotating 
+        # the mesh normals by the rotation itself.
+        z_down_local = (quat.inverted() @ Vector((0.0, 0.0, -1.0))).normalized()
+        z_down_angle = z_down_local.angle
+        angle_overhang = (math.pi / 2.0) - limit_angle
+
+        overhang_count = 0
+        min_angle = math.pi
+
+        for no in normals:
+            angle = z_down_angle(no, 4.0)
+            min_angle = min(min_angle, angle)
+            if angle < angle_overhang:
+                overhang_count += 1
+
+        return overhang_count, min_angle
+
+    @staticmethod
     def _overhang_score(obj: Object, matrix_world: Matrix, limit_angle: float) -> tuple[int, float]:
         from .. import lib
 
@@ -320,10 +340,8 @@ class OBJECT_OT_optimize_overhang(Operator):
 
         mat = matrix_world.copy()
         mat.translation.zero()
-        if not mat.is_identity:
-            bm.transform(mat)
-            bm.normal_update()
-
+        
+        # Simple non-threaded version for initial score
         z_down = Vector((0.0, 0.0, -1.0))
         z_down_angle = z_down.angle
         angle_overhang = (math.pi / 2.0) - limit_angle
@@ -332,7 +350,8 @@ class OBJECT_OT_optimize_overhang(Operator):
         min_angle = math.pi
 
         for face in bm.faces:
-            angle = z_down_angle(face.normal, 4.0)
+            world_no = (mat @ face.normal).normalized()
+            angle = z_down_angle(world_no, 4.0)
             min_angle = min(min_angle, angle)
             if angle < angle_overhang:
                 overhang_count += 1
@@ -346,7 +365,6 @@ class OBJECT_OT_optimize_overhang(Operator):
         count, angle = score
         best_count, best_angle = current
         return count < best_count or (count == best_count and angle > best_angle)
-
     def execute(self, context):
         if context.mode not in {"OBJECT", "EDIT_MESH"}:
             return {"CANCELLED"}
@@ -357,25 +375,40 @@ class OBJECT_OT_optimize_overhang(Operator):
             self.report({"ERROR"}, "Active object is not a mesh")
             return {"CANCELLED"}
 
+        from .. import lib
+        from concurrent.futures import ThreadPoolExecutor
+        import os
+
         props = context.scene.print3d_toolbox
         iterations = max(1, props.overhang_optimize_iterations)
         limit_angle = props.overhang_optimize_angle
 
         loc, rot, scale = obj.matrix_world.decompose()
-        base_matrix = Matrix.LocRotScale(loc, rot, scale)
-        best_matrix = base_matrix
-        best_score = self._overhang_score(obj, base_matrix, limit_angle)
+        
+        # Pre-calculating normals in a local space including scale but NOT the solver rotation
+        base_rot_mat = Matrix.LocRotScale(None, None, scale).to_3x3()
+        bm = lib.bmesh_copy_from_object(obj, transform=False, triangulate=False)
+        normals_world = [(base_rot_mat @ face.normal).normalized() for face in bm.faces]
+        bm.free()
 
-        for quat in self._iter_rotations(iterations):
-            candidate_rot = quat @ rot
-            candidate_matrix = Matrix.LocRotScale(loc, candidate_rot, scale)
-            score = self._overhang_score(obj, candidate_matrix, limit_angle)
+        best_rot = rot
+        best_score = self._overhang_score_fast(normals_world, rot, limit_angle)
 
-            if self._is_better(score, best_score):
-                best_score = score
-                best_matrix = candidate_matrix
+        def eval_rotation(quat_iter):
+            candidate_rot = quat_iter @ rot
+            score = self._overhang_score_fast(normals_world, candidate_rot, limit_angle)
+            return candidate_rot, score
 
-        obj.matrix_world = best_matrix
+        cpu_count = os.cpu_count() or 4
+        rotations = list(self._iter_rotations(iterations))
+        
+        with ThreadPoolExecutor(max_workers=cpu_count) as executor:
+            for candidate_rot, score in executor.map(eval_rotation, rotations):
+                if self._is_better(score, best_score):
+                    best_score = score
+                    best_rot = candidate_rot
+
+        obj.matrix_world = Matrix.LocRotScale(loc, best_rot, scale)
 
         overhang_faces, min_angle = best_score
         angle_deg = math.degrees(min_angle)

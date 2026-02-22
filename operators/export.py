@@ -52,49 +52,63 @@ class EXPORT_SCENE_OT_export(Operator):
         if not _ensure_export_dir(filepath, self.report):
             return {"CANCELLED"}
 
-        if props.export_format == "STL":
-            ret = bpy.ops.wm.stl_export(
-                filepath=filepath,
-                ascii_format=props.use_ascii_format,
-                global_scale=global_scale,
-                apply_modifiers=True,
-                export_selected_objects=True,
-            )
-        elif props.export_format == "PLY":
-            ret = bpy.ops.wm.ply_export(
-                filepath=filepath,
-                ascii_format=props.use_ascii_format,
-                global_scale=global_scale,
-                export_uv=props.use_uv,
-                export_normals=props.use_normals,
-                export_colors="SRGB" if props.use_colors else "NONE",
-                apply_modifiers=True,
-                export_selected_objects=True,
-                export_attributes=False,
-            )
-        elif props.export_format == "OBJ":
-            ret = bpy.ops.wm.obj_export(
-                filepath=filepath,
-                global_scale=global_scale,
-                export_uv=props.use_uv,
-                export_normals=props.use_normals,
-                export_colors=props.use_colors,
-                export_materials=props.use_copy_textures,
-                path_mode=path_mode,
-                apply_modifiers=True,
-                export_selected_objects=True,
-            )
-        elif props.export_format == "3MF":
-            ret = bpy.ops.export_scene.threemf(
-                filepath=filepath,
-                global_scale=global_scale,
-                use_scene_unit=props.use_3mf_units,
-                export_materials=props.use_3mf_materials,
-                apply_modifiers=True,
-                export_selected_objects=True,
-            )
-        else:
-            assert 0
+        # Non-destructive decimation
+        decimate_modifiers = []
+        if props.use_export_decimate and props.export_decimate_ratio < 1.0:
+            for obj in context.selected_objects:
+                if obj.type == "MESH":
+                    mod = obj.modifiers.new(name="__print3d_decimate__", type="DECIMATE")
+                    mod.ratio = props.export_decimate_ratio
+                    decimate_modifiers.append((obj, mod))
+
+        try:
+            if props.export_format == "STL":
+                ret = bpy.ops.wm.stl_export(
+                    filepath=filepath,
+                    ascii_format=props.use_ascii_format,
+                    global_scale=global_scale,
+                    apply_modifiers=True,
+                    export_selected_objects=True,
+                )
+            elif props.export_format == "PLY":
+                ret = bpy.ops.wm.ply_export(
+                    filepath=filepath,
+                    ascii_format=props.use_ascii_format,
+                    global_scale=global_scale,
+                    export_uv=props.use_uv,
+                    export_normals=props.use_normals,
+                    export_colors="SRGB" if props.use_colors else "NONE",
+                    apply_modifiers=True,
+                    export_selected_objects=True,
+                    export_attributes=False,
+                )
+            elif props.export_format == "OBJ":
+                ret = bpy.ops.wm.obj_export(
+                    filepath=filepath,
+                    global_scale=global_scale,
+                    export_uv=props.use_uv,
+                    export_normals=props.use_normals,
+                    export_colors=props.use_colors,
+                    export_materials=props.use_copy_textures,
+                    path_mode=path_mode,
+                    apply_modifiers=True,
+                    export_selected_objects=True,
+                )
+            elif props.export_format == "3MF":
+                ret = bpy.ops.export_scene.threemf(
+                    filepath=filepath,
+                    global_scale=global_scale,
+                    use_scene_unit=props.use_3mf_units,
+                    export_materials=props.use_3mf_materials,
+                    apply_modifiers=True,
+                    export_selected_objects=True,
+                )
+            else:
+                assert 0
+        finally:
+            # Clean up modifiers
+            for obj, mod in decimate_modifiers:
+                obj.modifiers.remove(mod)
 
         # for formats that don't support images
         if path_mode == "COPY" and props.export_format in {"STL", "PLY"}:
@@ -143,6 +157,82 @@ class EXPORT_SCENE_OT_export(Operator):
             return {"RUNNING_MODAL"}
 
         return self.execute(context)
+
+
+class WM_OT_print3d_preset_add(Operator):
+    bl_idname = "wm.print3d_preset_add"
+    bl_label = "Add Export Preset"
+    bl_description = "Add a new export preset with current settings"
+    bl_options = {"INTERNAL", "UNDO"}
+
+    name: StringProperty(name="Name", default="New Preset")
+
+    def execute(self, context):
+        from .. import preferences
+        from .. import __package__ as base_package
+
+        addon = context.preferences.addons.get(base_package)
+        if addon is None:
+            return {"CANCELLED"}
+
+        prefs = addon.preferences
+        props = context.scene.print3d_toolbox
+
+        preset = prefs.export_presets.add()
+        preset.name = self.name
+        preset.export_format = props.export_format
+        preset.use_ascii_format = props.use_ascii_format
+        preset.use_scene_scale = props.use_scene_scale
+        preset.use_copy_textures = props.use_copy_textures
+        preset.use_uv = props.use_uv
+        preset.use_normals = props.use_normals
+        preset.use_colors = props.use_colors
+        preset.use_3mf_materials = props.use_3mf_materials
+        preset.use_3mf_units = props.use_3mf_units
+        preset.use_export_decimate = props.use_export_decimate
+        preset.export_decimate_ratio = props.export_decimate_ratio
+
+        # Update the active preset selection
+        props.export_preset = str(len(prefs.export_presets) - 1)
+
+        self.report({"INFO"}, tip_("Preset added: {}").format(self.name))
+        return {"FINISHED"}
+
+    def invoke(self, context, _event):
+        return context.window_manager.invoke_props_dialog(self)
+
+
+class WM_OT_print3d_preset_remove(Operator):
+    bl_idname = "wm.print3d_preset_remove"
+    bl_label = "Remove Export Preset"
+    bl_description = "Remove the selected export preset"
+    bl_options = {"INTERNAL", "UNDO"}
+
+    def execute(self, context):
+        from .. import __package__ as base_package
+
+        addon = context.preferences.addons.get(base_package)
+        if addon is None:
+            return {"CANCELLED"}
+
+        prefs = addon.preferences
+        props = context.scene.print3d_toolbox
+
+        if not props.export_preset:
+            return {"CANCELLED"}
+
+        index = int(props.export_preset)
+        if index < 0 or index >= len(prefs.export_presets):
+            return {"CANCELLED"}
+
+        name = prefs.export_presets[index].name
+        prefs.export_presets.remove(index)
+
+        # Clear selection
+        props.export_preset = ""
+
+        self.report({"INFO"}, tip_("Preset removed: {}").format(name))
+        return {"FINISHED"}
 
 
 def _image_get(mat: Material) -> Image | None:

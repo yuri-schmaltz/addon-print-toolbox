@@ -66,6 +66,14 @@ class ExportPreset(PropertyGroup):
     use_colors: BoolProperty(name="Colors")
     use_3mf_materials: BoolProperty(name="Materials", default=True)
     use_3mf_units: BoolProperty(name="Units", default=True)
+    use_export_decimate: BoolProperty(name="Decimate")
+    export_decimate_ratio: FloatProperty(
+        name="Ratio",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        precision=3,
+    )
 
 
 class Print3DAddonPreferences(AddonPreferences):
@@ -224,6 +232,20 @@ class SceneProperties(PropertyGroup):
         description="Write scene unit information to the 3MF export",
         default=True,
     )
+    use_export_decimate: BoolProperty(
+        name="Decimate",
+        description="Automatically reduce mesh complexity on export",
+        default=False,
+    )
+    export_decimate_ratio: FloatProperty(
+        name="Decimate Ratio",
+        description="Ratio of faces to keep (1.0 = no reduction)",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        precision=3,
+        step=0.1,
+    )
 
     def apply_preset(self, context) -> None:
         if not self.export_preset or context is None:
@@ -248,6 +270,8 @@ class SceneProperties(PropertyGroup):
         self.use_colors = preset.use_colors
         self.use_3mf_materials = preset.use_3mf_materials
         self.use_3mf_units = preset.use_3mf_units
+        self.use_export_decimate = preset.use_export_decimate
+        self.export_decimate_ratio = preset.export_decimate_ratio
 
     # Build Volume
     # -------------------------------------
