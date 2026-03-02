@@ -39,7 +39,8 @@ class MESH_OT_clean_non_manifold(Operator):
 
         self.delete_loose()
         self.delete_interior()
-        self.remove_doubles(self.threshold)
+        if not self.remove_doubles(self.threshold):
+            self.report({"WARNING"}, "Vertex merge operator unavailable in this Blender build")
         self.fix_non_manifold(context, self.sides)  # may take a while
         self.make_normals_consistently_outwards()
 
@@ -80,21 +81,36 @@ class MESH_OT_clean_non_manifold(Operator):
         bpy.ops.mesh.reveal()
 
     @staticmethod
-    def remove_doubles(threshold: float):
+    def _mesh_operator_exists(name: str) -> bool:
+        if not hasattr(bpy.ops.mesh, name):
+            return False
+
+        op = getattr(bpy.ops.mesh, name)
+        try:
+            op.get_rna_type()
+        except (KeyError, AttributeError):
+            return False
+        return True
+
+    @classmethod
+    def remove_doubles(cls, threshold: float) -> bool:
         """remove duplicate vertices"""
         bpy.ops.mesh.select_all(action="SELECT")
-        # Extreme robustness: try all known names for this operation
-        try:
-            if hasattr(bpy.ops.mesh, "merge_by_distance"):
-                bpy.ops.mesh.merge_by_distance(distance=threshold)
-            else:
-                bpy.ops.mesh.remove_doubles(threshold=threshold)
-        except Exception:
+        if cls._mesh_operator_exists("merge_by_distance"):
             try:
-                # Fallback to legacy if modern fails despite hasattr
+                bpy.ops.mesh.merge_by_distance(distance=threshold)
+                return True
+            except RuntimeError:
+                pass
+
+        if cls._mesh_operator_exists("remove_doubles"):
+            try:
                 bpy.ops.mesh.remove_doubles(threshold=threshold)
-            except Exception:
-                pass # Silently fail if none of the operators are available
+                return True
+            except RuntimeError:
+                return False
+
+        return False
 
     @staticmethod
     def delete_loose():

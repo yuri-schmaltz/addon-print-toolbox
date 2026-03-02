@@ -7,7 +7,7 @@ from bpy.app.translations import pgettext_tip as tip_
 from bpy.types import Object, Panel
 
 from . import report
-from .preferences import bed_profile_dimensions
+from .preferences import bed_profile_dimensions, is_3mf_export_available
 from .operators import advisor
 
 
@@ -246,6 +246,7 @@ class VIEW3D_PT_print3d_export(Sidebar, Panel):
         layout.use_property_decorate = False
 
         props = context.scene.print3d_toolbox
+        is_3mf_available = is_3mf_export_available()
 
         layout.prop(props, "export_path", text="")
         layout.prop(props, "export_format")
@@ -255,7 +256,14 @@ class VIEW3D_PT_print3d_export(Sidebar, Panel):
         row.operator("wm.print3d_preset_add", text="", icon="ADD")
         row.operator("wm.print3d_preset_remove", text="", icon="REMOVE")
 
-        layout.operator("export_scene.print3d_export", icon="EXPORT")
+        if props.export_format == "3MF" and not is_3mf_available:
+            warn = layout.row()
+            warn.alert = True
+            warn.label(text="3MF exporter unavailable in this Blender build")
+
+        row = layout.row()
+        row.enabled = not (props.export_format == "3MF" and not is_3mf_available)
+        row.operator("export_scene.print3d_export", icon="EXPORT")
 
         header, panel = layout.panel("options", default_closed=True)
         header.label(text="Options")
@@ -282,6 +290,6 @@ class VIEW3D_PT_print3d_export(Sidebar, Panel):
             sub.prop(props, "export_decimate_ratio", text="Ratio")
 
             col = panel.column(heading="3MF")
-            col.active = props.export_format == "3MF"
+            col.active = props.export_format == "3MF" and is_3mf_available
             col.prop(props, "use_3mf_materials")
             col.prop(props, "use_3mf_units")

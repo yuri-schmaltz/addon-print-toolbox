@@ -182,20 +182,27 @@ class OBJECT_OT_align_xy(Operator):
 
         from mathutils import Vector
 
-        self.context = context
         mode_orig = context.mode
         skip_invalid = []
+        used_all_faces = []
+        objects = [obj for obj in context.selected_objects if obj.type == "MESH"]
 
-        for obj in context.selected_objects:
-            orig_loc = obj.location.copy()
-            orig_scale = obj.scale.copy()
+        if not objects:
+            self.report({"ERROR"}, "At least one mesh object must be selected")
+            return {"CANCELLED"}
 
+        for obj in objects:
             # When in edit mode, do as the edit mode does.
             if mode_orig == "EDIT_MESH":
                 bm = bmesh.from_edit_mesh(obj.data)
                 faces = [f for f in bm.faces if f.select]
             else:
                 faces = [p for p in obj.data.polygons if p.select]
+                # In Object Mode polygon selection is often empty, so use all faces.
+                if not faces:
+                    faces = list(obj.data.polygons)
+                    if faces:
+                        used_all_faces.append(obj.name)
 
             if not faces:
                 skip_invalid.append(obj.name)
@@ -213,6 +220,12 @@ class OBJECT_OT_align_xy(Operator):
                 for face in faces:
                     normal += face.normal
                     
+            if normal.length_squared < 1e-6:
+                # Symmetric meshes can cancel out to zero when using all faces.
+                if mode_orig == "OBJECT" and faces:
+                    largest_face = max(faces, key=lambda f: f.area)
+                    normal = largest_face.normal.copy()
+
             if normal.length_squared < 1e-6:
                 skip_invalid.append(obj.name)
                 continue
@@ -236,11 +249,17 @@ class OBJECT_OT_align_xy(Operator):
 
         if len(skip_invalid) > 0:
             for name in skip_invalid:
-                print(tip_("Align to XY: Skipping object {}. No faces selected").format(name))
+                print(tip_("Align to XY: Skipping object {}. Could not determine alignment normal").format(name))
             if len(skip_invalid) == 1:
-                self.report({"WARNING"}, tip_("Skipping object {}. No faces selected").format(skip_invalid[0]))
+                self.report({"WARNING"}, tip_("Skipping object {}. Could not determine alignment normal").format(skip_invalid[0]))
             else:
-                self.report({"WARNING"}, "Skipping some objects. No faces selected. See terminal")
+                self.report({"WARNING"}, "Skipping some objects. Could not determine alignment normal. See terminal")
+
+        if used_all_faces and mode_orig == "OBJECT":
+            self.report(
+                {"INFO"},
+                tip_("Align XY used all faces for: {}").format(", ".join(used_all_faces)),
+            )
         return {"FINISHED"}
 
     def invoke(self, context, event):

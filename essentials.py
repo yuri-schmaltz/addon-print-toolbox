@@ -19,15 +19,37 @@ def get_classes(modules: tuple[Any]) -> tuple[type]:
         bpy.types.UIList,
     }
 
-    classes = set()
+    classes: list[type] = []
+    seen: set[type] = set()
 
     for module in modules:
         for cls in module.__dict__.values():
             if isinstance(cls, type):
                 for base in cls.__bases__:
                     if base in bases:
-                        classes.add(cls)
+                        if cls not in seen:
+                            classes.append(cls)
+                            seen.add(cls)
                         break
+
+    # Register PropertyGroup before AddonPreferences so CollectionProperty
+    # types are guaranteed to exist at registration time.
+    priority = {
+        bpy.types.PropertyGroup: 0,
+        bpy.types.AddonPreferences: 1,
+        bpy.types.Operator: 2,
+        bpy.types.UIList: 3,
+        bpy.types.Menu: 4,
+        bpy.types.Panel: 5,
+    }
+
+    def sort_key(cls: type) -> int:
+        for base, value in priority.items():
+            if issubclass(cls, base):
+                return value
+        return 99
+
+    classes.sort(key=sort_key)
 
     return tuple(classes)
 

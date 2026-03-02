@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2025 Mikhail Rachinskiy
 
-import bpy
-from bpy.types import Operator, Object
-from bpy.props import StringProperty, IntProperty
+import re
+
+from bpy.types import Operator
 import bmesh
-from mathutils import Vector
 import math
-from .. import report
 
 # Storage for suggestions
 _suggestions = []
@@ -34,7 +32,6 @@ class MESH_OT_smart_advisor_analyze(Operator):
     bl_description = "Analyze the mesh and provide intelligent design suggestions"
     
     def execute(self, context):
-        from .. import lib
         obj = context.active_object
         if not obj or obj.type != 'MESH':
             return {'CANCELLED'}
@@ -62,12 +59,14 @@ class MESH_OT_smart_advisor_analyze(Operator):
 
     def _check_support(self, obj, context):
         props = context.scene.print3d_toolbox
-        # Simple heuristic: only suggest if there's a significant amount of overhangs
-        # We can look at the last report if available
-        if "overhangs" in props.report_overhang and " 0" not in props.report_overhang:
+        overhang_count = _extract_report_count(props.report_overhang, "Overhang Face")
+        if overhang_count is None:
+            return
+
+        if overhang_count > 0:
             add_suggestion(
                 "SUPPORT_REDUCE",
-                "High overhang area detected. Optimize orientation to reduce support.",
+                f"Detected {overhang_count} overhang faces. Optimize orientation to reduce support.",
                 "HIGH",
                 "object.print3d_optimize_overhang",
                 icon="ORIENTATION_GIMBAL"
@@ -114,15 +113,26 @@ class MESH_OT_smart_advisor_analyze(Operator):
             )
 
     def _check_thin_walls(self, obj, context):
-        # We can look at existing thickness reports
-        # For now, a generic prompt if thickness check was never run
-        add_suggestion(
-            "THICKNESS_FIX",
-            "Ensure wall thickness is consistent using Solidify.",
-            "MEDIUM",
-            "mesh.print3d_apply_solidify",
-            icon="MOD_SOLIDIFY"
-        )
+        props = context.scene.print3d_toolbox
+        thin_faces = _extract_report_count(props.report_thickness, "Thin Faces")
+        if thin_faces is None:
+            add_suggestion(
+                "THICKNESS_CHECK",
+                "Run thickness analysis to verify minimum wall thickness.",
+                "LOW",
+                "mesh.print3d_check_thick",
+                icon="LINCURVE"
+            )
+            return
+
+        if thin_faces > 0:
+            add_suggestion(
+                "THICKNESS_FIX",
+                f"Detected {thin_faces} thin faces. Add Solidify to increase wall thickness.",
+                "MEDIUM",
+                "mesh.print3d_apply_solidify",
+                icon="MOD_SOLIDIFY"
+            )
 
 class MESH_OT_apply_stress_relief(Operator):
     bl_idname = "mesh.print3d_apply_stress_relief"
@@ -165,3 +175,15 @@ class MESH_OT_apply_solidify(Operator):
         mod = obj.modifiers.new(name="Wall Thickness", type='SOLIDIFY')
         mod.thickness = props.thickness_min
         return {'FINISHED'}
+
+
+def _extract_report_count(report_text: str, label: str) -> int | None:
+    if not report_text:
+        return None
+
+    pattern = re.compile(rf"{re.escape(label)}:\s*(\d+)")
+    match = pattern.search(report_text)
+    if not match:
+        return None
+
+    return int(match.group(1))

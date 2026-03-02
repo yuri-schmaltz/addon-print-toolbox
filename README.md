@@ -8,7 +8,7 @@ Conjunto de utilidades para preparar modelos para impressão 3D diretamente no B
 3. Ative **3D Print Toolbox**. O painel aparecerá na aba **3D Print** da região **UI** do *Viewport*.
 
 ## Fluxo de uso
-O painel organiza as ações em quatro seções:
+O painel organiza as ações em cinco seções:
 
 ### Analyze
 - **Volume / Area**: calcula métricas da malha ativa, respeitando a escala/unidade da cena.
@@ -21,6 +21,8 @@ O painel organiza as ações em quatro seções:
   - **Sharp Edge**: destaca arestas acima de `Angle`.
   - **Overhang**: marca superfícies com inclinação maior que `Angle`.
 - **Check All**: executa todas as verificações em sequência.
+- **Optimize Overhang**: busca orientação com menor área de overhang.
+- **Multi-Object**: opcionalmente analisa todos os objetos selecionados e valida tolerância de montagem.
 - Os resultados ficam em **Result**; no modo *Edit* é possível selecionar diretamente os elementos reportados.
 
 ### Clean Up
@@ -29,12 +31,18 @@ O painel organiza as ações em quatro seções:
 ### Edit
 - **Hollow**: cria superfície deslocada (interna ou externa) usando VDB. Exige NumPy e `openvdb` (ou `pyopenvdb` em versões anteriores ao Blender 4.4).
 - **Align XY**: alinha o objeto ao plano XY.
+- **Build Volume**: perfis prontos (Ender 3, Prusa MK4, Bambu P1P ou custom), verificação de encaixe e autoescala.
 - **Scale To**: ajusta a malha pelo **Volume** ou **Bounds** alvo.
 
+### Smart Advisor (Beta)
+- Gera sugestões de DfAM com base em overhang, densidade de malha e espessura.
+- Permite aplicar ações rápidas como `Stress Relief`, `Subdivision` e `Solidify`.
+
 ### Export
-- Define **Export Directory** e **Format** (OBJ, PLY ou STL).
+- Define **Export Directory** e **Format** (OBJ, PLY, STL ou 3MF quando disponível no Blender).
 - Opções gerais: `ASCII`, `Scene Scale` e **Copy Textures**.
 - Opções de geometria (exceto STL): `UVs`, `Normals` e `Colors`.
+- Opções extras: presets de exportação, decimate não destrutivo e parâmetros específicos de 3MF.
 - Clique em **Export** para gerar o arquivo com as configurações aplicadas.
 
 ## Preferências e propriedades

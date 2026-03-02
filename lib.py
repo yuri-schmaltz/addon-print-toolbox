@@ -110,9 +110,12 @@ def bmesh_check_self_intersect_object(obj: Object) -> MutableSequence[int]:
         return array.array("i", ())
 
     bm = bmesh_copy_from_object(obj, transform=False, triangulate=False)
-    tree = mathutils.bvhtree.BVHTree.FromBMesh(bm, epsilon=0.00001)
-    overlap = tree.overlap(tree)
-    faces_error = {i for i_pair in overlap for i in i_pair}
+    try:
+        tree = mathutils.bvhtree.BVHTree.FromBMesh(bm, epsilon=0.00001)
+        overlap = tree.overlap(tree)
+        faces_error = {i for i_pair in overlap for i in i_pair}
+    finally:
+        bm.free()
 
     return array.array("i", faces_error)
 
@@ -139,7 +142,7 @@ def _bmesh_face_points_random(f: BMFace, num_points=1, margin=0.05) -> Iterator[
         yield vecs[0] + u1 * side1 + u2 * side2
 
 
-def bmesh_check_thick_object(obj: Object, thickness: float, context) -> MutableSequence[int]:
+def bmesh_check_thick_object(obj: Object, thickness: float, _context) -> MutableSequence[int]:
     """Check for wall thickness using parallel BVH raycasting.
     
     This replaces the slow sequential scene-based raycasting with a 
@@ -147,63 +150,72 @@ def bmesh_check_thick_object(obj: Object, thickness: float, context) -> MutableS
     """
     import mathutils
 
+    if thickness <= 0.0:
+        return array.array("i", ())
+
     # Triangulate for consistent ray-intersection
     bm = bmesh_copy_from_object(obj, transform=True, triangulate=False)
-    face_index_map_org = {f: i for i, f in enumerate(bm.faces)}
-    ret = bmesh.ops.triangulate(bm, faces=bm.faces)
-    face_map = ret["face_map"]
-    
-    # Build BVH Tree for fast raycasting
-    tree = mathutils.bvhtree.BVHTree.FromBMesh(bm)
-    
-    faces_error = set()
-    bm_faces_new = bm.faces[:]
-    num_faces = len(bm_faces_new)
-    
-    if num_faces == 0:
-        bm.free()
-        return array.array("i", [])
-
-    # Optimization: tune chunk size based on face count
-    cpu_count = os.cpu_count() or 4
-    chunk_size = max(100, num_faces // (cpu_count * 4))
-    
-    def process_face_chunk(faces_chunk):
-        local_errors = set()
-        EPS_BIAS = 0.0001
+    try:
+        face_index_map_org = {f: i for i, f in enumerate(bm.faces)}
+        ret = bmesh.ops.triangulate(bm, faces=bm.faces)
+        face_map = ret["face_map"]
         
-        for f in faces_chunk:
-            no = f.normal
-            no_sta = no * EPS_BIAS
-            no_end = no * thickness
+        # Build BVH Tree for fast raycasting
+        tree = mathutils.bvhtree.BVHTree.FromBMesh(bm)
+        
+        faces_error = set()
+        bm_faces_new = bm.faces[:]
+        num_faces = len(bm_faces_new)
+        
+        if num_faces == 0:
+            return array.array("i", [])
+
+        # Optimization: tune chunk size based on face count
+        cpu_count = os.cpu_count() or 4
+        chunk_size = max(100, num_faces // (cpu_count * 4))
+        
+        def process_face_chunk(faces_chunk):
+            local_errors = set()
+            eps_bias = 0.0001
             
-            # Use random sampling for better surface coverage
-            for p in _bmesh_face_points_random(f, num_points=6):
-                p_a = p - no_sta
-                p_b = p - no_end
-                p_dir = p_b - p_a
-                dist_max = p_dir.length
+            for f in faces_chunk:
+                no = f.normal
+                no_sta = no * eps_bias
+                no_end = no * thickness
                 
-                # tree.ray_cast(origin, direction, distance)
-                _co, _no, index, _dist = tree.ray_cast(p_a, p_dir, dist_max)
-                
-                if index != -1:
+                # Use random sampling for better surface coverage
+                for p in _bmesh_face_points_random(f, num_points=6):
+                    p_a = p - no_sta
+                    p_b = p - no_end
+                    p_dir = p_b - p_a
+                    dist_max = p_dir.length
+                    if dist_max <= 1e-12:
+                        continue
+
+                    # tree.ray_cast(origin, direction, distance)
+                    _co, _no, index, _dist = tree.ray_cast(p_a, p_dir.normalized(), dist_max)
+                    if index is None:
+                        continue
+                    if index < 0 or index >= len(bm_faces_new):
+                        continue
+
                     # Found a hit within thickness threshold
                     for f_iter in (f, bm_faces_new[index]):
                         f_org = face_map.get(f_iter, f_iter)
                         local_errors.add(face_index_map_org[f_org])
-        return local_errors
+            return local_errors
 
-    # Execute in parallel
-    chunks = [bm_faces_new[i:i + chunk_size] for i in range(0, num_faces, chunk_size)]
-    
-    with ThreadPoolExecutor(max_workers=cpu_count) as executor:
-        results = executor.map(process_face_chunk, chunks)
-        for local_set in results:
-            faces_error.update(local_set)
+        # Execute in parallel
+        chunks = [bm_faces_new[i:i + chunk_size] for i in range(0, num_faces, chunk_size)]
+        
+        with ThreadPoolExecutor(max_workers=cpu_count) as executor:
+            results = executor.map(process_face_chunk, chunks)
+            for local_set in results:
+                faces_error.update(local_set)
 
-    bm.free()
-    return array.array("i", faces_error)
+        return array.array("i", faces_error)
+    finally:
+        bm.free()
 
 
 def face_is_distorted(face: BMFace, angle: float) -> bool:

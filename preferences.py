@@ -51,6 +51,27 @@ def _preset_items(self, context):
         return []
 
 
+def _operator_exists(module_name: str, op_name: str) -> bool:
+    if not hasattr(bpy.ops, module_name):
+        return False
+
+    submodule = getattr(bpy.ops, module_name)
+    if not hasattr(submodule, op_name):
+        return False
+
+    op = getattr(submodule, op_name)
+    try:
+        op.get_rna_type()
+    except (KeyError, AttributeError):
+        return False
+
+    return True
+
+
+def is_3mf_export_available() -> bool:
+    return _operator_exists("export_scene", "threemf") or _operator_exists("wm", "threemf_export")
+
+
 class Print3DExportPreset(PropertyGroup):
     name: StringProperty(name="Name", default="Preset")
     export_format: EnumProperty(

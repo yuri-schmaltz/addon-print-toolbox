@@ -16,37 +16,55 @@ else:
 classes = essentials.get_classes((operators, preferences, ui))
 
 
+def _safe_register_class(cls) -> None:
+    try:
+        bpy.utils.register_class(cls)
+    except ValueError as exc:
+        if "already registered" in str(exc):
+            print(f"Print3D Toolbox: Class already registered, skipping {cls.__name__}")
+            return
+        raise
+
+
+def _safe_unregister_class(cls) -> None:
+    try:
+        bpy.utils.unregister_class(cls)
+    except RuntimeError as exc:
+        if "missing bl_rna" in str(exc) or "not registered" in str(exc):
+            return
+        print(f"Print3D Toolbox: Failed to unregister {cls.__name__}: {exc}")
+
+
 def register():
     for cls in classes:
-        try:
-            bpy.utils.register_class(cls)
-        except ValueError:
-            # Already registered as something else? Log it.
-            print(f"Print3D Toolbox: Skipping registration of {cls}, already active.")
+        _safe_register_class(cls)
 
+    if hasattr(bpy.types.Scene, "print3d_toolbox"):
+        del bpy.types.Scene.print3d_toolbox
     bpy.types.Scene.print3d_toolbox = PointerProperty(type=preferences.Print3DSceneProperties)
 
-    if 'draw_volume' in globals():
+    if "draw_volume" in globals():
         draw_volume.register()
 
     # Translations
     # ---------------------------
 
-    bpy.app.translations.register(__package__, localization.DICTIONARY)
+    try:
+        bpy.app.translations.register(__package__, localization.DICTIONARY)
+    except ValueError as exc:
+        if "already registered" not in str(exc):
+            raise
 
 
 def unregister():
     # Defensive unregistration
     for cls in reversed(classes if isinstance(classes, (list, tuple)) else list(classes)):
-        try:
-            bpy.utils.unregister_class(cls)
-        except Exception:
-            pass
+        _safe_unregister_class(cls)
 
     if hasattr(bpy.types.Scene, "print3d_toolbox"):
         del bpy.types.Scene.print3d_toolbox
     
-    if 'draw_volume' in globals():
+    if "draw_volume" in globals():
         draw_volume.unregister()
 
     # Translations
@@ -54,5 +72,6 @@ def unregister():
 
     try:
         bpy.app.translations.unregister(__package__)
-    except Exception:
-        pass
+    except ValueError:
+        # Can happen during reload/partial registration failures.
+        return

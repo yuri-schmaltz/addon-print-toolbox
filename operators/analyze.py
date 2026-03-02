@@ -112,7 +112,14 @@ def execute_check(self, context):
     props = context.scene.print3d_toolbox
 
     info = []
-    self.main_check(obj, info, context)
+    try:
+        self.main_check(obj, info, context)
+    except Exception as exc:
+        err = _exception_text(exc)
+        self.report({"ERROR"}, tip_("{} check failed: {}").format(self.bl_label, err))
+        report.update((tip_("{}: Failed ({})").format(self.bl_label, err), None))
+        return {"CANCELLED"}
+
     report.update(*info)
 
     # Sync to scene properties for Smart Advisor
@@ -133,6 +140,11 @@ def execute_check(self, context):
     multiple_obj_warning(self, context)
 
     return {"FINISHED"}
+
+
+def _exception_text(exc: Exception) -> str:
+    text = str(exc).strip().replace("\n", " ")
+    return text if text else exc.__class__.__name__
 
 
 def multiple_obj_warning(self, context) -> None:
@@ -472,7 +484,11 @@ class MESH_OT_check_all(Operator):
 
         for cls in MESH_OT_check_all.check_cls:
             count_pre = len(info_obj)
-            cls.main_check(obj, info_obj, context)
+            try:
+                cls.main_check(obj, info_obj, context)
+            except Exception as exc:
+                err = _exception_text(exc)
+                info_obj.append((tip_("{}: Failed ({})").format(cls.bl_label, err), None))
             
             # Sync to scene properties
             prop_name = prop_map.get(cls)
@@ -530,6 +546,7 @@ class MESH_OT_check_all(Operator):
     def execute(self, context):
         obj = context.active_object
         props = context.scene.print3d_toolbox
+        failed_labels = []
 
         if props.analyze_selected_objects:
             selected = [ob for ob in context.selected_objects if ob.type == "MESH"]
@@ -549,11 +566,19 @@ class MESH_OT_check_all(Operator):
         else:
             info = []
             for cls in self.check_cls:
-                cls.main_check(obj, info, context)
+                try:
+                    cls.main_check(obj, info, context)
+                except Exception as exc:
+                    err = _exception_text(exc)
+                    failed_labels.append(cls.bl_label)
+                    info.append((tip_("{}: Failed ({})").format(cls.bl_label, err), None))
 
             report.update(*info)
 
             multiple_obj_warning(self, context)
+
+        if failed_labels:
+            self.report({"WARNING"}, tip_("Checks failed: {}").format(", ".join(failed_labels)))
 
         return {"FINISHED"}
 

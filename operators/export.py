@@ -95,14 +95,7 @@ class EXPORT_SCENE_OT_export(Operator):
                     export_selected_objects=True,
                 )
             elif props.export_format == "3MF":
-                ret = bpy.ops.export_scene.threemf(
-                    filepath=filepath,
-                    global_scale=global_scale,
-                    use_scene_unit=props.use_3mf_units,
-                    export_materials=props.use_3mf_materials,
-                    apply_modifiers=True,
-                    export_selected_objects=True,
-                )
+                ret = _export_3mf(filepath, global_scale, props, self.report)
             else:
                 assert 0
         finally:
@@ -118,7 +111,10 @@ class EXPORT_SCENE_OT_export(Operator):
             self.report({"INFO"}, tip_("Exported: {!r}").format(filepath))
             return {"FINISHED"}
 
-        self.report({"ERROR"}, "Export failed")
+        if props.export_format == "3MF" and not is_3mf_export_available():
+            self.report({"WARNING"}, "3MF export skipped: exporter unavailable in this Blender build")
+        else:
+            self.report({"ERROR"}, "Export failed")
         return {"CANCELLED"}
 
     def invoke(self, context, event):
@@ -168,7 +164,6 @@ class WM_OT_print3d_preset_add(Operator):
     name: StringProperty(name="Name", default="New Preset")
 
     def execute(self, context):
-        from .. import preferences
         from .. import __package__ as base_package
 
         addon = context.preferences.addons.get(base_package)
@@ -290,3 +285,62 @@ def _ensure_export_dir(filepath: str, report) -> bool:
         return False
 
     return True
+
+
+def _operator_exists(module_name: str, op_name: str) -> bool:
+    if not hasattr(bpy.ops, module_name):
+        return False
+
+    submodule = getattr(bpy.ops, module_name)
+    if not hasattr(submodule, op_name):
+        return False
+
+    op = getattr(submodule, op_name)
+    try:
+        op.get_rna_type()
+    except (KeyError, AttributeError):
+        return False
+
+    return True
+
+
+def is_3mf_export_available() -> bool:
+    return _operator_exists("export_scene", "threemf") or _operator_exists("wm", "threemf_export")
+
+
+def _filtered_operator_kwargs(op, kwargs: dict) -> dict:
+    try:
+        rna = op.get_rna_type()
+        valid = {prop.identifier for prop in rna.properties}
+    except Exception:
+        return kwargs
+
+    return {key: value for key, value in kwargs.items() if key in valid}
+
+
+def _export_3mf(filepath: str, global_scale: float, props, report):
+    kwargs_common = {
+        "filepath": filepath,
+        "global_scale": global_scale,
+        "use_scene_unit": props.use_3mf_units,
+        "export_materials": props.use_3mf_materials,
+        "apply_modifiers": True,
+        "export_selected_objects": True,
+        # Names used by some legacy/new exporters.
+        "use_selection": True,
+        "selected_objects_only": True,
+    }
+
+    for module_name, op_name in (("export_scene", "threemf"), ("wm", "threemf_export")):
+        if not _operator_exists(module_name, op_name):
+            continue
+
+        op = getattr(getattr(bpy.ops, module_name), op_name)
+        kwargs = _filtered_operator_kwargs(op, kwargs_common)
+        return op(**kwargs)
+
+    report(
+        {"WARNING"},
+        "3MF exporter is unavailable in this Blender build. Use STL/OBJ/PLY or install 3MF support.",
+    )
+    return {"CANCELLED"}
