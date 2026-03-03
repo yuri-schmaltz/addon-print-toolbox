@@ -205,6 +205,48 @@ class Print3DSceneProperties(PropertyGroup):
         description="Scale down export to account for assembly tolerance",
         default=False,
     )
+    assembly_auto_iterations: IntProperty(
+        name="Iterations",
+        description="Maximum iterations used by automatic assembly clearance adjustment",
+        default=8,
+        min=1,
+        soft_max=64,
+    )
+    assembly_auto_keep_active: BoolProperty(
+        name="Keep Active Fixed",
+        description="Keep the active object fixed and move only the others",
+        default=True,
+    )
+    assembly_auto_scale_fallback: BoolProperty(
+        name="Scale Fallback",
+        description="If moving cannot satisfy tolerance, shrink violating objects uniformly",
+        default=True,
+    )
+    assembly_auto_scale_iterations: IntProperty(
+        name="Scale Iterations",
+        description="Maximum scale fallback iterations",
+        default=24,
+        min=1,
+        soft_max=128,
+    )
+    assembly_auto_scale_step: FloatProperty(
+        name="Scale Step",
+        description="Uniform reduction applied each fallback iteration (e.g. 0.01 = 1%)",
+        default=0.01,
+        min=0.0001,
+        max=0.25,
+        precision=4,
+        step=0.1,
+    )
+    assembly_auto_scale_max_reduction: FloatProperty(
+        name="Max Reduction",
+        description="Maximum total uniform reduction per object during fallback",
+        default=0.20,
+        min=0.0,
+        max=0.95,
+        precision=3,
+        step=0.1,
+    )
 
     # Export
     # -------------------------------------

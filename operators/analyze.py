@@ -583,6 +583,264 @@ class MESH_OT_check_all(Operator):
         return {"FINISHED"}
 
 
+class OBJECT_OT_auto_clearance(Operator):
+    bl_idname = "object.print3d_auto_clearance"
+    bl_label = "Auto Adjust Clearance"
+    bl_description = "Automatically move selected mesh objects and optionally scale them to satisfy assembly tolerance"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @staticmethod
+    def _bbox_world(ob: Object) -> tuple[Vector, Vector]:
+        coords = [ob.matrix_world @ Vector(corner) for corner in ob.bound_box]
+        mins = Vector((min(c.x for c in coords), min(c.y for c in coords), min(c.z for c in coords)))
+        maxs = Vector((max(c.x for c in coords), max(c.y for c in coords), max(c.z for c in coords)))
+        return mins, maxs
+
+    @staticmethod
+    def _axis_gap(min_a: float, max_a: float, min_b: float, max_b: float) -> float:
+        if max_a < min_b:
+            return min_b - max_a
+        if max_b < min_a:
+            return min_a - max_b
+        return 0.0
+
+    @classmethod
+    def _pair_adjustment(
+        cls,
+        obj_a: Object,
+        obj_b: Object,
+        tolerance: float,
+        bounds: dict[str, tuple[Vector, Vector]],
+    ) -> tuple[float, Vector]:
+        min_a, max_a = bounds[obj_a.name]
+        min_b, max_b = bounds[obj_b.name]
+
+        gaps = (
+            cls._axis_gap(min_a.x, max_a.x, min_b.x, max_b.x),
+            cls._axis_gap(min_a.y, max_a.y, min_b.y, max_b.y),
+            cls._axis_gap(min_a.z, max_a.z, min_b.z, max_b.z),
+        )
+        clearance = max(gaps)
+
+        best_axis = 0
+        best_dist = float("inf")
+        best_sign = 1.0
+
+        for axis in range(3):
+            dist_pos = max(0.0, (max_a[axis] + tolerance) - min_b[axis])
+            dist_neg = max(0.0, (max_b[axis] + tolerance) - min_a[axis])
+
+            if dist_pos <= dist_neg:
+                dist = dist_pos
+                sign = 1.0
+            else:
+                dist = dist_neg
+                sign = -1.0
+
+            if dist < best_dist:
+                best_dist = dist
+                best_axis = axis
+                best_sign = sign
+
+        move_vec = Vector((0.0, 0.0, 0.0))
+        if best_dist != float("inf"):
+            move_vec[best_axis] = best_sign * best_dist
+
+        return clearance, move_vec
+
+    @classmethod
+    def _collect_violations(
+        cls,
+        objects: list[Object],
+        tolerance: float,
+        bounds: dict[str, tuple[Vector, Vector]],
+    ) -> list[tuple[Object, Object, float, Vector]]:
+        violations = []
+
+        for i, obj_a in enumerate(objects):
+            for obj_b in objects[i + 1:]:
+                clearance, move_vec = cls._pair_adjustment(obj_a, obj_b, tolerance, bounds)
+                if clearance < tolerance:
+                    violations.append((obj_a, obj_b, clearance, move_vec))
+
+        return violations
+
+    @staticmethod
+    def _scale_object_uniform(obj: Object, factor: float) -> bool:
+        if factor <= 0.0:
+            return False
+
+        scale = obj.scale.copy()
+        new_scale = scale * factor
+        if min(abs(new_scale.x), abs(new_scale.y), abs(new_scale.z)) <= 1e-9:
+            return False
+
+        obj.scale = new_scale
+        return True
+
+    def execute(self, context):
+        if context.mode not in {"OBJECT", "EDIT_MESH"}:
+            return {"CANCELLED"}
+
+        props = context.scene.print3d_toolbox
+        selected = [ob for ob in context.selected_objects if ob.type == "MESH"]
+        tolerance = props.assembly_tolerance
+        iterations = max(1, props.assembly_auto_iterations)
+        use_scale_fallback = props.assembly_auto_scale_fallback
+        scale_iterations = max(1, props.assembly_auto_scale_iterations)
+        scale_step = min(max(props.assembly_auto_scale_step, 0.0001), 0.99)
+        max_reduction = min(max(props.assembly_auto_scale_max_reduction, 0.0), 0.95)
+
+        if len(selected) < 2:
+            self.report({"ERROR"}, "Select at least two mesh objects")
+            return {"CANCELLED"}
+
+        if tolerance <= 0.0:
+            self.report({"ERROR"}, "Tolerance must be greater than zero")
+            return {"CANCELLED"}
+
+        mode_orig = context.mode
+        fixed_obj = context.active_object if (props.assembly_auto_keep_active and context.active_object in selected) else None
+
+        if mode_orig == "EDIT_MESH":
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+        try:
+            bounds = {ob.name: self._bbox_world(ob) for ob in selected}
+            initial = self._collect_violations(selected, tolerance, bounds)
+
+            if not initial:
+                msg = tip_("Auto clearance: all selected objects already meet {:.4f}m tolerance").format(tolerance)
+                report.update((msg, None))
+                self.report({"INFO"}, msg)
+                return {"FINISHED"}
+
+            iterations_used = 0
+            for step in range(iterations):
+                bounds = {ob.name: self._bbox_world(ob) for ob in selected}
+                violations = self._collect_violations(selected, tolerance, bounds)
+                if not violations:
+                    break
+
+                deltas = {ob.name: Vector((0.0, 0.0, 0.0)) for ob in selected}
+                movable_pairs = 0
+
+                for obj_a, obj_b, _clearance, move_vec in violations:
+                    if move_vec.length_squared <= 1e-18:
+                        continue
+
+                    if fixed_obj is not None:
+                        if obj_a == fixed_obj and obj_b != fixed_obj:
+                            deltas[obj_b.name] += move_vec
+                            movable_pairs += 1
+                            continue
+                        if obj_b == fixed_obj and obj_a != fixed_obj:
+                            deltas[obj_a.name] -= move_vec
+                            movable_pairs += 1
+                            continue
+
+                    half_move = move_vec * 0.5
+                    deltas[obj_a.name] -= half_move
+                    deltas[obj_b.name] += half_move
+                    movable_pairs += 1
+
+                moved_any = False
+                for ob in selected:
+                    delta = deltas[ob.name]
+                    if delta.length_squared <= 1e-18:
+                        continue
+                    ob.matrix_world.translation = ob.matrix_world.translation + delta
+                    moved_any = True
+
+                iterations_used = step + 1
+                if not moved_any or movable_pairs == 0:
+                    break
+
+            bounds = {ob.name: self._bbox_world(ob) for ob in selected}
+            remaining = self._collect_violations(selected, tolerance, bounds)
+            scaled_objects: set[str] = set()
+            scale_iterations_used = 0
+            scale_factors = {ob.name: 1.0 for ob in selected}
+            min_factor = max(0.0001, 1.0 - max_reduction)
+
+            if remaining and use_scale_fallback and max_reduction > 0.0:
+                for step in range(scale_iterations):
+                    violating_names = set()
+                    for obj_a, obj_b, _clearance, _move_vec in remaining:
+                        if fixed_obj is None or obj_a != fixed_obj:
+                            violating_names.add(obj_a.name)
+                        if fixed_obj is None or obj_b != fixed_obj:
+                            violating_names.add(obj_b.name)
+
+                    if not violating_names:
+                        break
+
+                    scaled_any = False
+                    for ob in selected:
+                        if ob.name not in violating_names:
+                            continue
+
+                        current_factor = scale_factors[ob.name]
+                        if current_factor <= (min_factor + 1e-9):
+                            continue
+
+                        next_factor = max(min_factor, current_factor * (1.0 - scale_step))
+                        delta_factor = next_factor / current_factor
+                        if delta_factor >= 0.999999:
+                            continue
+
+                        if self._scale_object_uniform(ob, delta_factor):
+                            scale_factors[ob.name] = next_factor
+                            scaled_objects.add(ob.name)
+                            scaled_any = True
+
+                    scale_iterations_used = step + 1
+                    if not scaled_any:
+                        break
+
+                    bounds = {ob.name: self._bbox_world(ob) for ob in selected}
+                    remaining = self._collect_violations(selected, tolerance, bounds)
+                    if not remaining:
+                        break
+
+            resolved = len(initial) - len(remaining)
+
+            info = []
+            summary = tip_("Auto clearance: resolved {}/{} pairs").format(resolved, len(initial))
+            info.append((summary, None))
+            self.report({"INFO"}, summary)
+
+            move_summary = tip_("Auto clearance movement: {} iteration(s)").format(iterations_used)
+            info.append((move_summary, None))
+            self.report({"INFO"}, move_summary)
+
+            if scale_iterations_used > 0:
+                scale_summary = tip_(
+                    "Auto clearance scale fallback: scaled {} object(s) in {} iteration(s)"
+                ).format(len(scaled_objects), scale_iterations_used)
+                info.append((scale_summary, None))
+                self.report({"INFO"}, scale_summary)
+
+            if remaining:
+                warn = tip_("Auto clearance: {} pair(s) still below {:.4f}m tolerance").format(len(remaining), tolerance)
+                info.append((warn, None))
+                self.report({"WARNING"}, warn)
+                for obj_a, obj_b, clearance, _move_vec in remaining[:20]:
+                    info.append((
+                        tip_("Assembly clearance {} vs {}: {:.4f}m is below tolerance {:.4f}m").format(
+                            obj_a.name, obj_b.name, clearance, tolerance,
+                        ),
+                        None,
+                    ))
+
+            report.update(*info)
+        finally:
+            if mode_orig == "EDIT_MESH" and context.active_object is not None and context.active_object.type == "MESH":
+                bpy.ops.object.mode_set(mode="EDIT")
+
+        return {"FINISHED"}
+
+
 class MESH_OT_report_select(Operator):
     bl_idname = "mesh.print3d_select_report"
     bl_label = "Select"

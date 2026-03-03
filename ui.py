@@ -130,6 +130,20 @@ class VIEW3D_PT_print3d_analyze(Sidebar, Panel):
         row.prop(props, "use_assembly_tolerance")
         row.prop(props, "assembly_tolerance", text="")
 
+        col = box.column(align=True)
+        col.enabled = props.analyze_selected_objects and props.use_assembly_tolerance
+        row = col.row(align=True)
+        row.operator("object.print3d_auto_clearance", text="Auto Adjust", icon="MOD_PHYSICS")
+        row.prop(props, "assembly_auto_iterations", text="")
+        col.prop(props, "assembly_auto_keep_active")
+        col.prop(props, "assembly_auto_scale_fallback")
+        sub = col.column(align=True)
+        sub.enabled = props.assembly_auto_scale_fallback
+        row = sub.row(align=True)
+        row.prop(props, "assembly_auto_scale_iterations", text="")
+        row.prop(props, "assembly_auto_scale_step", text="")
+        sub.prop(props, "assembly_auto_scale_max_reduction")
+
         self.draw_report(context)
 
 
