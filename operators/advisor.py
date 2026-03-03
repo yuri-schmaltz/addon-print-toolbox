@@ -6,6 +6,7 @@ import re
 from bpy.types import Operator
 import bmesh
 import math
+from mathutils import Vector
 
 # Storage for suggestions
 _suggestions = []
@@ -49,6 +50,9 @@ class MESH_OT_smart_advisor_analyze(Operator):
         
         # 4. Check for Thin Walls (Integrate with existing check)
         self._check_thin_walls(obj, context)
+
+        # 5. Check assembly clearance between selected parts
+        self._check_assembly_clearance(context)
         
         if not _suggestions:
             self.report({'INFO'}, "No suggestions found for this mesh.")
@@ -134,6 +138,63 @@ class MESH_OT_smart_advisor_analyze(Operator):
                 icon="MOD_SOLIDIFY"
             )
 
+    def _check_assembly_clearance(self, context):
+        props = context.scene.print3d_toolbox
+        selected = [ob for ob in context.selected_objects if ob.type == 'MESH']
+
+        if len(selected) < 2 or not props.use_assembly_tolerance:
+            return
+
+        tolerance = props.assembly_tolerance
+        if tolerance <= 0.0:
+            return
+
+        def _bbox_world(ob):
+            coords = [ob.matrix_world @ Vector(corner) for corner in ob.bound_box]
+            mins = Vector((min(c.x for c in coords), min(c.y for c in coords), min(c.z for c in coords)))
+            maxs = Vector((max(c.x for c in coords), max(c.y for c in coords), max(c.z for c in coords)))
+            return mins, maxs
+
+        def _axis_gap(min_a, max_a, min_b, max_b):
+            if max_a < min_b:
+                return min_b - max_a
+            if max_b < min_a:
+                return min_a - max_b
+            return 0.0
+
+        violating_pairs = 0
+        for i, obj_a in enumerate(selected):
+            min_a, max_a = _bbox_world(obj_a)
+            for obj_b in selected[i + 1:]:
+                min_b, max_b = _bbox_world(obj_b)
+                clearance = max(
+                    _axis_gap(min_a.x, max_a.x, min_b.x, max_b.x),
+                    _axis_gap(min_a.y, max_a.y, min_b.y, max_b.y),
+                    _axis_gap(min_a.z, max_a.z, min_b.z, max_b.z),
+                )
+                if clearance < tolerance:
+                    violating_pairs += 1
+
+        if violating_pairs <= 0:
+            return
+
+        if not props.assembly_auto_scale_fallback:
+            add_suggestion(
+                "ASSEMBLY_CONTACT_SCALING_ENABLE",
+                "Assembly conflicts detected. Enable contact scaling before auto-adjust.",
+                "HIGH",
+                "mesh.print3d_enable_contact_scaling",
+                icon="MOD_PHYSICS",
+            )
+
+        add_suggestion(
+            "ASSEMBLY_CLEARANCE_FIX",
+            f"Detected {violating_pairs} assembly clearance conflicts below {tolerance:.4f}m. Apply local contact scaling.",
+            "HIGH",
+            "object.print3d_auto_clearance",
+            icon="MOD_PHYSICS",
+        )
+
 class MESH_OT_apply_stress_relief(Operator):
     bl_idname = "mesh.print3d_apply_stress_relief"
     bl_label = "Apply Stress Relief"
@@ -174,6 +235,21 @@ class MESH_OT_apply_solidify(Operator):
         props = context.scene.print3d_toolbox
         mod = obj.modifiers.new(name="Wall Thickness", type='SOLIDIFY')
         mod.thickness = props.thickness_min
+        return {'FINISHED'}
+
+
+class MESH_OT_enable_contact_scaling(Operator):
+    bl_idname = "mesh.print3d_enable_contact_scaling"
+    bl_label = "Enable Contact Scaling"
+    bl_description = "Enable contact scaling and assembly checks for automatic tolerance adjustment"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        props = context.scene.print3d_toolbox
+        props.analyze_selected_objects = True
+        props.use_assembly_tolerance = True
+        props.assembly_auto_scale_fallback = True
+        self.report({'INFO'}, "Contact scaling enabled for assembly auto-adjust")
         return {'FINISHED'}
 
 

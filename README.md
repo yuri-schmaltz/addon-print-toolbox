@@ -23,8 +23,8 @@ O painel organiza as ações em cinco seções:
 - **Check All**: executa todas as verificações em sequência.
 - **Optimize Overhang**: busca orientação com menor área de overhang.
 - **Multi-Object**: opcionalmente analisa todos os objetos selecionados e valida tolerância de montagem.
-- **Auto Adjust Clearance**: desloca automaticamente objetos selecionados para atingir a tolerância de montagem configurada.
-- Se o deslocamento não resolver todos os pares, o operador pode aplicar **fallback por escala uniforme** nos objetos em conflito.
+- **Auto Adjust Clearance**: ajusta automaticamente a malha apenas nas regiões de contato para atingir a tolerância de montagem configurada.
+- O ajuste é local (sem mover objetos), preservando o posicionamento da montagem.
 - Os resultados ficam em **Result**; no modo *Edit* é possível selecionar diretamente os elementos reportados.
 
 ### Clean Up

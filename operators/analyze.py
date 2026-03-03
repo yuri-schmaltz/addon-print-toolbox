@@ -586,7 +586,7 @@ class MESH_OT_check_all(Operator):
 class OBJECT_OT_auto_clearance(Operator):
     bl_idname = "object.print3d_auto_clearance"
     bl_label = "Auto Adjust Clearance"
-    bl_description = "Automatically move selected mesh objects and optionally scale them to satisfy assembly tolerance"
+    bl_description = "Adjust contact regions by local scaling to satisfy assembly tolerance without moving objects"
     bl_options = {"REGISTER", "UNDO"}
 
     @staticmethod
@@ -666,17 +666,87 @@ class OBJECT_OT_auto_clearance(Operator):
         return violations
 
     @staticmethod
-    def _scale_object_uniform(obj: Object, factor: float) -> bool:
-        if factor <= 0.0:
-            return False
+    def _new_side_map(value: float = 0.0) -> dict[tuple[int, str], float]:
+        return {(axis, side): value for axis in range(3) for side in ("MIN", "MAX")}
 
-        scale = obj.scale.copy()
-        new_scale = scale * factor
-        if min(abs(new_scale.x), abs(new_scale.y), abs(new_scale.z)) <= 1e-9:
-            return False
+    @staticmethod
+    def _ensure_single_user_mesh(obj: Object) -> None:
+        if obj.type != "MESH":
+            return
+        if obj.data is not None and obj.data.users > 1:
+            obj.data = obj.data.copy()
 
-        obj.scale = new_scale
-        return True
+    @staticmethod
+    def _apply_contact_adjustments(
+        obj: Object,
+        side_amounts: dict[tuple[int, str], float],
+        band_widths: dict[int, float],
+    ) -> int:
+        me = obj.data
+        if me is None or len(me.vertices) == 0:
+            return 0
+
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bm.verts.ensure_lookup_table()
+
+        mat = obj.matrix_world
+        mat_inv = mat.inverted_safe().to_3x3()
+
+        verts = list(bm.verts)
+        world_coords = [mat @ v.co for v in verts]
+        axis_values = {
+            0: [co.x for co in world_coords],
+            1: [co.y for co in world_coords],
+            2: [co.z for co in world_coords],
+        }
+        side_values = {
+            (0, "MIN"): min(axis_values[0]),
+            (0, "MAX"): max(axis_values[0]),
+            (1, "MIN"): min(axis_values[1]),
+            (1, "MAX"): max(axis_values[1]),
+            (2, "MIN"): min(axis_values[2]),
+            (2, "MAX"): max(axis_values[2]),
+        }
+
+        moved_count = 0
+        eps = 1e-12
+
+        for idx, v in enumerate(verts):
+            co_w = world_coords[idx]
+            delta_w = Vector((0.0, 0.0, 0.0))
+
+            for axis in range(3):
+                band = max(band_widths.get(axis, 0.0), 1e-9)
+                for side in ("MIN", "MAX"):
+                    amount = side_amounts.get((axis, side), 0.0)
+                    if amount <= eps:
+                        continue
+
+                    boundary = side_values[(axis, side)]
+                    distance = (boundary - co_w[axis]) if side == "MAX" else (co_w[axis] - boundary)
+
+                    if distance < -eps or distance > band:
+                        continue
+
+                    weight = 1.0 - min(1.0, max(0.0, distance) / band)
+                    if weight <= 0.0:
+                        continue
+
+                    direction = -1.0 if side == "MAX" else 1.0
+                    delta_w[axis] += direction * amount * weight
+
+            if delta_w.length_squared > eps:
+                v.co += mat_inv @ delta_w
+                moved_count += 1
+
+        if moved_count:
+            bm.normal_update()
+            bm.to_mesh(me)
+            me.update()
+
+        bm.free()
+        return moved_count
 
     def execute(self, context):
         if context.mode not in {"OBJECT", "EDIT_MESH"}:
@@ -685,10 +755,9 @@ class OBJECT_OT_auto_clearance(Operator):
         props = context.scene.print3d_toolbox
         selected = [ob for ob in context.selected_objects if ob.type == "MESH"]
         tolerance = props.assembly_tolerance
-        iterations = max(1, props.assembly_auto_iterations)
-        use_scale_fallback = props.assembly_auto_scale_fallback
         scale_iterations = max(1, props.assembly_auto_scale_iterations)
-        scale_step = min(max(props.assembly_auto_scale_step, 0.0001), 0.99)
+        use_contact_scaling = props.assembly_auto_scale_fallback
+        scale_step = min(max(props.assembly_auto_scale_step, 0.0001), 0.5)
         max_reduction = min(max(props.assembly_auto_scale_max_reduction, 0.0), 0.95)
 
         if len(selected) < 2:
@@ -699,6 +768,10 @@ class OBJECT_OT_auto_clearance(Operator):
             self.report({"ERROR"}, "Tolerance must be greater than zero")
             return {"CANCELLED"}
 
+        if not use_contact_scaling:
+            self.report({"ERROR"}, "Enable Contact Scaling to adjust tolerance")
+            return {"CANCELLED"}
+
         mode_orig = context.mode
         fixed_obj = context.active_object if (props.assembly_auto_keep_active and context.active_object in selected) else None
 
@@ -706,6 +779,12 @@ class OBJECT_OT_auto_clearance(Operator):
             bpy.ops.object.mode_set(mode="OBJECT")
 
         try:
+            for ob in selected:
+                if fixed_obj is not None and ob == fixed_obj:
+                    continue
+                self._ensure_single_user_mesh(ob)
+
+            context.view_layer.update()
             bounds = {ob.name: self._bbox_world(ob) for ob in selected}
             initial = self._collect_violations(selected, tolerance, bounds)
 
@@ -715,94 +794,109 @@ class OBJECT_OT_auto_clearance(Operator):
                 self.report({"INFO"}, msg)
                 return {"FINISHED"}
 
+            initial_extents = {}
+            for ob in selected:
+                mins, maxs = bounds[ob.name]
+                initial_extents[ob.name] = (
+                    max(maxs.x - mins.x, 1e-9),
+                    max(maxs.y - mins.y, 1e-9),
+                    max(maxs.z - mins.z, 1e-9),
+                )
+
+            used_reduction = {ob.name: self._new_side_map(0.0) for ob in selected}
             iterations_used = 0
-            for step in range(iterations):
+            vertices_adjusted = 0
+
+            for step in range(scale_iterations):
+                context.view_layer.update()
                 bounds = {ob.name: self._bbox_world(ob) for ob in selected}
                 violations = self._collect_violations(selected, tolerance, bounds)
                 if not violations:
                     break
 
-                deltas = {ob.name: Vector((0.0, 0.0, 0.0)) for ob in selected}
-                movable_pairs = 0
+                requests = {ob.name: self._new_side_map(0.0) for ob in selected}
 
                 for obj_a, obj_b, _clearance, move_vec in violations:
-                    if move_vec.length_squared <= 1e-18:
+                    axis = max(range(3), key=lambda i: abs(move_vec[i]))
+                    needed = abs(move_vec[axis])
+                    if needed <= 1e-12:
                         continue
+
+                    if move_vec[axis] >= 0.0:
+                        side_a, side_b = "MAX", "MIN"
+                    else:
+                        side_a, side_b = "MIN", "MAX"
 
                     if fixed_obj is not None:
                         if obj_a == fixed_obj and obj_b != fixed_obj:
-                            deltas[obj_b.name] += move_vec
-                            movable_pairs += 1
+                            key_b = (axis, side_b)
+                            requests[obj_b.name][key_b] = max(requests[obj_b.name][key_b], needed)
                             continue
                         if obj_b == fixed_obj and obj_a != fixed_obj:
-                            deltas[obj_a.name] -= move_vec
-                            movable_pairs += 1
+                            key_a = (axis, side_a)
+                            requests[obj_a.name][key_a] = max(requests[obj_a.name][key_a], needed)
                             continue
 
-                    half_move = move_vec * 0.5
-                    deltas[obj_a.name] -= half_move
-                    deltas[obj_b.name] += half_move
-                    movable_pairs += 1
+                    half = needed * 0.5
+                    key_a = (axis, side_a)
+                    key_b = (axis, side_b)
+                    requests[obj_a.name][key_a] = max(requests[obj_a.name][key_a], half)
+                    requests[obj_b.name][key_b] = max(requests[obj_b.name][key_b], half)
 
-                moved_any = False
+                adjusted_any = False
                 for ob in selected:
-                    delta = deltas[ob.name]
-                    if delta.length_squared <= 1e-18:
+                    if fixed_obj is not None and ob == fixed_obj:
                         continue
-                    ob.matrix_world.translation = ob.matrix_world.translation + delta
-                    moved_any = True
+
+                    extents = initial_extents[ob.name]
+                    request_map = requests[ob.name]
+                    apply_map = self._new_side_map(0.0)
+                    band_widths = {}
+
+                    for axis in range(3):
+                        extent = extents[axis]
+                        step_cap = extent * scale_step
+                        side_limit = extent * max_reduction
+                        band_widths[axis] = max(
+                            extent * max(0.05, scale_step * 4.0),
+                            step_cap * 2.0,
+                            tolerance * 2.0,
+                            1e-6,
+                        )
+
+                        for side in ("MIN", "MAX"):
+                            key = (axis, side)
+                            requested = request_map[key]
+                            if requested <= 1e-12:
+                                continue
+
+                            remaining_limit = max(0.0, side_limit - used_reduction[ob.name][key])
+                            if remaining_limit <= 1e-12:
+                                continue
+
+                            amount = min(requested, step_cap, remaining_limit)
+                            if amount <= 1e-12:
+                                continue
+                            apply_map[key] = amount
+
+                    if not any(amount > 1e-12 for amount in apply_map.values()):
+                        continue
+
+                    changed = self._apply_contact_adjustments(ob, apply_map, band_widths)
+                    if changed > 0:
+                        adjusted_any = True
+                        vertices_adjusted += changed
+                        for key, amount in apply_map.items():
+                            if amount > 1e-12:
+                                used_reduction[ob.name][key] += amount
 
                 iterations_used = step + 1
-                if not moved_any or movable_pairs == 0:
+                if not adjusted_any:
                     break
 
+            context.view_layer.update()
             bounds = {ob.name: self._bbox_world(ob) for ob in selected}
             remaining = self._collect_violations(selected, tolerance, bounds)
-            scaled_objects: set[str] = set()
-            scale_iterations_used = 0
-            scale_factors = {ob.name: 1.0 for ob in selected}
-            min_factor = max(0.0001, 1.0 - max_reduction)
-
-            if remaining and use_scale_fallback and max_reduction > 0.0:
-                for step in range(scale_iterations):
-                    violating_names = set()
-                    for obj_a, obj_b, _clearance, _move_vec in remaining:
-                        if fixed_obj is None or obj_a != fixed_obj:
-                            violating_names.add(obj_a.name)
-                        if fixed_obj is None or obj_b != fixed_obj:
-                            violating_names.add(obj_b.name)
-
-                    if not violating_names:
-                        break
-
-                    scaled_any = False
-                    for ob in selected:
-                        if ob.name not in violating_names:
-                            continue
-
-                        current_factor = scale_factors[ob.name]
-                        if current_factor <= (min_factor + 1e-9):
-                            continue
-
-                        next_factor = max(min_factor, current_factor * (1.0 - scale_step))
-                        delta_factor = next_factor / current_factor
-                        if delta_factor >= 0.999999:
-                            continue
-
-                        if self._scale_object_uniform(ob, delta_factor):
-                            scale_factors[ob.name] = next_factor
-                            scaled_objects.add(ob.name)
-                            scaled_any = True
-
-                    scale_iterations_used = step + 1
-                    if not scaled_any:
-                        break
-
-                    bounds = {ob.name: self._bbox_world(ob) for ob in selected}
-                    remaining = self._collect_violations(selected, tolerance, bounds)
-                    if not remaining:
-                        break
-
             resolved = len(initial) - len(remaining)
 
             info = []
@@ -810,16 +904,11 @@ class OBJECT_OT_auto_clearance(Operator):
             info.append((summary, None))
             self.report({"INFO"}, summary)
 
-            move_summary = tip_("Auto clearance movement: {} iteration(s)").format(iterations_used)
-            info.append((move_summary, None))
-            self.report({"INFO"}, move_summary)
-
-            if scale_iterations_used > 0:
-                scale_summary = tip_(
-                    "Auto clearance scale fallback: scaled {} object(s) in {} iteration(s)"
-                ).format(len(scaled_objects), scale_iterations_used)
-                info.append((scale_summary, None))
-                self.report({"INFO"}, scale_summary)
+            scale_summary = tip_("Auto clearance contact scaling: {} iteration(s), {} vertices adjusted").format(
+                iterations_used, vertices_adjusted,
+            )
+            info.append((scale_summary, None))
+            self.report({"INFO"}, scale_summary)
 
             if remaining:
                 warn = tip_("Auto clearance: {} pair(s) still below {:.4f}m tolerance").format(len(remaining), tolerance)
