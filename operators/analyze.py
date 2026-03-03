@@ -1006,14 +1006,4 @@ class WM_OT_report_clear(Operator):
 
     def execute(self, context):
         report.clear()
-        props = context.scene.print3d_toolbox
-        props.report_overhang = ""
-        props.report_intersections = ""
-        props.report_solid = ""
-        props.report_thickness = ""
-        props.report_degenerate = ""
-        props.report_distorted = ""
-        props.report_sharp = ""
-        props.analysis_snapshot_json = ""
-        props.advisor_suggestions.clear()
         return {"FINISHED"}

@@ -90,3 +90,18 @@ def clear(context=None):
     if props is None:
         return
     props.report_items.clear()
+    if hasattr(props, "analysis_snapshot_json"):
+        props.analysis_snapshot_json = ""
+    if hasattr(props, "advisor_suggestions"):
+        props.advisor_suggestions.clear()
+    for attr in (
+        "report_overhang",
+        "report_intersections",
+        "report_solid",
+        "report_thickness",
+        "report_degenerate",
+        "report_distorted",
+        "report_sharp",
+    ):
+        if hasattr(props, attr):
+            setattr(props, attr, "")
