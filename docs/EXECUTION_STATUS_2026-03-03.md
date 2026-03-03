@@ -16,7 +16,10 @@ Base: `docs/ISSUES_EXECUTION_PLAN.md`
 
 ## Validacao tecnica executada
 - [x] Validacao sintatica local (`python -m compileall -q .`)
-- [ ] Execucao do smoke test no Blender (pendente: binario `blender` nao encontrado no PATH deste ambiente)
+- [x] Execucao do smoke test no Blender em 2026-03-03
+  - Comando: `powershell -ExecutionPolicy Bypass -File tests/run_smoke.ps1 -BlenderPath "C:\Blender\blender.exe"`
+  - Blender: `5.0.1` (build 2025-12-16)
+  - Resultado: `Smoke test passed` e export STL validado
 
 ## Risco residual
 - Serializacao de indices do report em `StringProperty` pode crescer em malhas muito grandes; monitorar tamanho em cenarios extremos.

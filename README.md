@@ -60,6 +60,12 @@ Requer Blender instalado e disponível no `PATH`.
 blender --background --factory-startup --python tests/smoke_headless.py
 ```
 
+No Windows, também é possível executar:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests/run_smoke.ps1 -BlenderPath "C:\Program Files\Blender Foundation\Blender 4.4\blender.exe"
+```
+
 O script valida registro do add-on, execução de análise, geração de snapshot, Advisor, export STL e limpeza de estado.
 
 ## Suporte e licença
