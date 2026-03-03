@@ -13,6 +13,8 @@ from bpy.types import Object, Operator
 from mathutils import Euler, Matrix, Vector
 
 from .. import report
+from ..core.models import AnalysisSnapshot
+from ..core.runtime import exception_text
 
 
 def _get_unit(unit_system: str, unit: str) -> tuple[float, str]:
@@ -115,7 +117,7 @@ def execute_check(self, context):
     try:
         self.main_check(obj, info, context)
     except Exception as exc:
-        err = _exception_text(exc)
+        err = exception_text(exc)
         self.report({"ERROR"}, tip_("{} check failed: {}").format(self.bl_label, err))
         report.update((tip_("{}: Failed ({})").format(self.bl_label, err), None))
         return {"CANCELLED"}
@@ -137,14 +139,25 @@ def execute_check(self, context):
         if prop_name:
             setattr(props, prop_name, " | ".join([item[0] for item in info]))
 
+    _persist_analysis_snapshot(context, "single_check", info)
+
     multiple_obj_warning(self, context)
 
     return {"FINISHED"}
 
 
-def _exception_text(exc: Exception) -> str:
-    text = str(exc).strip().replace("\n", " ")
-    return text if text else exc.__class__.__name__
+def _persist_analysis_snapshot(context, source: str, info_items: list[tuple[str, tuple | None]]) -> None:
+    scene = context.scene
+    props = scene.print3d_toolbox
+    active_name = context.active_object.name if context.active_object else ""
+    lines = [text for text, _data in info_items]
+    snapshot = AnalysisSnapshot.create(
+        scene_name=scene.name,
+        active_object=active_name,
+        source=source,
+        report_lines=lines,
+    )
+    props.analysis_snapshot_json = snapshot.to_json()
 
 
 def multiple_obj_warning(self, context) -> None:
@@ -487,7 +500,7 @@ class MESH_OT_check_all(Operator):
             try:
                 cls.main_check(obj, info_obj, context)
             except Exception as exc:
-                err = _exception_text(exc)
+                err = exception_text(exc)
                 info_obj.append((tip_("{}: Failed ({})").format(cls.bl_label, err), None))
             
             # Sync to scene properties
@@ -563,17 +576,19 @@ class MESH_OT_check_all(Operator):
                 info_batch.extend(self._assembly_clearance_info(selected, props.assembly_tolerance))
 
             report.update(*info_batch)
+            _persist_analysis_snapshot(context, "check_all_multi", info_batch)
         else:
             info = []
             for cls in self.check_cls:
                 try:
                     cls.main_check(obj, info, context)
                 except Exception as exc:
-                    err = _exception_text(exc)
+                    err = exception_text(exc)
                     failed_labels.append(cls.bl_label)
                     info.append((tip_("{}: Failed ({})").format(cls.bl_label, err), None))
 
             report.update(*info)
+            _persist_analysis_snapshot(context, "check_all_single", info)
 
             multiple_obj_warning(self, context)
 
@@ -991,4 +1006,14 @@ class WM_OT_report_clear(Operator):
 
     def execute(self, context):
         report.clear()
+        props = context.scene.print3d_toolbox
+        props.report_overhang = ""
+        props.report_intersections = ""
+        props.report_solid = ""
+        props.report_thickness = ""
+        props.report_degenerate = ""
+        props.report_distorted = ""
+        props.report_sharp = ""
+        props.analysis_snapshot_json = ""
+        props.advisor_suggestions.clear()
         return {"FINISHED"}

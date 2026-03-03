@@ -18,6 +18,7 @@ from bpy.types import AddonPreferences, PropertyGroup
 
 from . import __package__ as base_package
 from . import report
+from .core.compat import is_3mf_export_available
 
 
 BED_PROFILES = {
@@ -49,27 +50,6 @@ def _preset_items(self, context):
         return [(str(i), preset.name, "") for i, preset in enumerate(prefs.export_presets)]
     except Exception:
         return []
-
-
-def _operator_exists(module_name: str, op_name: str) -> bool:
-    if not hasattr(bpy.ops, module_name):
-        return False
-
-    submodule = getattr(bpy.ops, module_name)
-    if not hasattr(submodule, op_name):
-        return False
-
-    op = getattr(submodule, op_name)
-    try:
-        op.get_rna_type()
-    except (KeyError, AttributeError):
-        return False
-
-    return True
-
-
-def is_3mf_export_available() -> bool:
-    return _operator_exists("export_scene", "threemf") or _operator_exists("wm", "threemf_export")
 
 
 class Print3DExportPreset(PropertyGroup):
@@ -105,6 +85,41 @@ class Print3DAddonPreferences(AddonPreferences):
     def draw(self, context):
         layout = self.layout
         layout.label(text="Export Presets are managed from the 3D Print Toolbox panel.")
+
+
+class Print3DReportItem(PropertyGroup):
+    text: StringProperty(name="Text", default="")
+    bm_type: EnumProperty(
+        name="Data Type",
+        items=(
+            ("NONE", "None", ""),
+            ("VERT", "Vertex", ""),
+            ("EDGE", "Edge", ""),
+            ("FACE", "Face", ""),
+        ),
+        default="NONE",
+        options={"HIDDEN"},
+    )
+    bm_indices: StringProperty(name="Indices", default="", options={"HIDDEN"})
+
+
+class Print3DAdvisorSuggestionItem(PropertyGroup):
+    suggestion_id: StringProperty(name="ID", default="", options={"HIDDEN"})
+    message: StringProperty(name="Message", default="")
+    priority: EnumProperty(
+        name="Priority",
+        items=(
+            ("HIGH", "High", ""),
+            ("MEDIUM", "Medium", ""),
+            ("LOW", "Low", ""),
+        ),
+        default="LOW",
+    )
+    operator_id: StringProperty(name="Operator", default="", options={"HIDDEN"})
+    icon: StringProperty(name="Icon", default="LIGHTBULB_ON", options={"HIDDEN"})
+    reason: StringProperty(name="Reason", default="")
+    evidence: StringProperty(name="Evidence", default="")
+    data_json: StringProperty(name="Data", default="", options={"HIDDEN"})
 
 
 class Print3DSceneProperties(PropertyGroup):
@@ -178,6 +193,9 @@ class Print3DSceneProperties(PropertyGroup):
     report_degenerate: StringProperty(name="Degenerate Report", default="", options={'HIDDEN'})
     report_distorted: StringProperty(name="Distorted Report", default="", options={'HIDDEN'})
     report_sharp: StringProperty(name="Sharp Report", default="", options={'HIDDEN'})
+    report_items: CollectionProperty(type=Print3DReportItem, options={"HIDDEN"})
+    analysis_snapshot_json: StringProperty(name="Analysis Snapshot", default="", options={"HIDDEN"})
+    advisor_suggestions: CollectionProperty(type=Print3DAdvisorSuggestionItem, options={"HIDDEN"})
 
     # Multi-Object
     # -------------------------------------
@@ -391,3 +409,8 @@ class Print3DSceneProperties(PropertyGroup):
     @staticmethod
     def get_report():
         return report.info()
+
+    def get_analysis_snapshot(self):
+        from .core.models import AnalysisSnapshot
+
+        return AnalysisSnapshot.from_json(self.analysis_snapshot_json)

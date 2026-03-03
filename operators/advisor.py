@@ -2,30 +2,125 @@
 # SPDX-FileCopyrightText: 2025 Mikhail Rachinskiy
 
 import re
+import json
 
 from bpy.types import Operator
 import bmesh
 import math
 from mathutils import Vector
+from ..core.models import AdvisorSuggestion
 
-# Storage for suggestions
-_suggestions = []
+def _get_props(context=None):
+    if context is None:
+        import bpy
 
-def get_suggestions():
-    return _suggestions
+        context = bpy.context
 
-def clear_suggestions():
-    _suggestions.clear()
+    scene = getattr(context, "scene", None)
+    if scene is None:
+        return None
 
-def add_suggestion(id, message, priority, operator_id, icon="LIGHTBULB_ON", data=None):
-    _suggestions.append({
-        "id": id,
-        "message": message,
-        "priority": priority,
-        "operator_id": operator_id,
-        "icon": icon,
-        "data": data
-    })
+    return getattr(scene, "print3d_toolbox", None)
+
+
+def get_suggestions(context=None):
+    props = _get_props(context)
+    if props is None:
+        return []
+
+    suggestions = []
+    for item in props.advisor_suggestions:
+        data = None
+        if item.data_json:
+            try:
+                data = json.loads(item.data_json)
+            except ValueError:
+                data = None
+        suggestions.append(
+            {
+                "id": item.suggestion_id,
+                "message": item.message,
+                "priority": item.priority,
+                "operator_id": item.operator_id,
+                "icon": item.icon,
+                "reason": item.reason,
+                "evidence": item.evidence,
+                "data": data,
+            }
+        )
+    priority_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+
+    def _evidence_score(item):
+        match = re.search(r"(-?\d+(\.\d+)?)", item.get("evidence", ""))
+        return float(match.group(1)) if match else 0.0
+
+    suggestions.sort(
+        key=lambda item: (
+            priority_rank.get(item.get("priority"), 99),
+            -_evidence_score(item),
+            item.get("id", ""),
+        )
+    )
+    return suggestions
+
+
+def clear_suggestions(context=None):
+    props = _get_props(context)
+    if props is None:
+        return
+    props.advisor_suggestions.clear()
+
+
+def add_suggestion(
+    suggestion_id,
+    message,
+    priority,
+    operator_id,
+    icon="LIGHTBULB_ON",
+    data=None,
+    context=None,
+    reason="",
+    evidence="",
+):
+    props = _get_props(context)
+    if props is None:
+        return
+
+    suggestion = AdvisorSuggestion(
+        suggestion_id=suggestion_id,
+        message=message,
+        priority=priority,
+        operator_id=operator_id,
+        icon=icon,
+        reason=reason,
+        evidence=evidence,
+        data=data,
+    )
+
+    item = props.advisor_suggestions.add()
+    item.suggestion_id = suggestion.suggestion_id
+    item.message = suggestion.message
+    item.priority = suggestion.priority
+    item.operator_id = suggestion.operator_id
+    item.icon = suggestion.icon
+    item.reason = suggestion.reason
+    item.evidence = suggestion.evidence
+    item.data_json = json.dumps(suggestion.data, separators=(",", ":"), ensure_ascii=True) if suggestion.data else ""
+
+
+def _metric_from_snapshot(props, label: str) -> int | None:
+    snapshot = props.get_analysis_snapshot()
+    if snapshot is None:
+        return None
+
+    for metric in snapshot.metrics:
+        metric_label = metric.label.strip()
+        if metric_label == label or metric_label.endswith(f": {label}"):
+            try:
+                return int(metric.value)
+            except (TypeError, ValueError):
+                continue
+    return None
 
 class MESH_OT_smart_advisor_analyze(Operator):
     bl_idname = "mesh.print3d_advisor_analyze"
@@ -37,7 +132,7 @@ class MESH_OT_smart_advisor_analyze(Operator):
         if not obj or obj.type != 'MESH':
             return {'CANCELLED'}
         
-        clear_suggestions()
+        clear_suggestions(context)
         
         # 1. Check for Support Optimization
         self._check_support(obj, context)
@@ -54,16 +149,19 @@ class MESH_OT_smart_advisor_analyze(Operator):
         # 5. Check assembly clearance between selected parts
         self._check_assembly_clearance(context)
         
-        if not _suggestions:
+        suggestions = get_suggestions(context)
+        if not suggestions:
             self.report({'INFO'}, "No suggestions found for this mesh.")
         else:
-            self.report({'INFO'}, f"Found {len(_suggestions)} suggestions.")
+            self.report({'INFO'}, f"Found {len(suggestions)} suggestions.")
             
         return {'FINISHED'}
 
     def _check_support(self, obj, context):
         props = context.scene.print3d_toolbox
-        overhang_count = _extract_report_count(props.report_overhang, "Overhang Face")
+        overhang_count = _metric_from_snapshot(props, "Overhang Face")
+        if overhang_count is None:
+            overhang_count = _extract_report_count(props.report_overhang, "Overhang Face")
         if overhang_count is None:
             return
 
@@ -73,7 +171,10 @@ class MESH_OT_smart_advisor_analyze(Operator):
                 f"Detected {overhang_count} overhang faces. Optimize orientation to reduce support.",
                 "HIGH",
                 "object.print3d_optimize_overhang",
-                icon="ORIENTATION_GIMBAL"
+                icon="ORIENTATION_GIMBAL",
+                context=context,
+                reason="Overhang faces increase support requirements and print risk.",
+                evidence=f"Overhang Face count: {overhang_count}",
             )
 
     def _check_stress_relief(self, obj, context):
@@ -98,7 +199,10 @@ class MESH_OT_smart_advisor_analyze(Operator):
                 f"Found {sharp_concave} sharp internal edges. Add fillets to reduce stress.",
                 "MEDIUM",
                 "mesh.print3d_apply_stress_relief",
-                icon="MOD_BEVEL"
+                icon="MOD_BEVEL",
+                context=context,
+                reason="Sharp concave transitions are stress concentrators under load.",
+                evidence=f"Concave edges below -45 deg: {sharp_concave}",
             )
 
     def _check_mesh_density(self, obj, context):
@@ -113,19 +217,27 @@ class MESH_OT_smart_advisor_analyze(Operator):
                 "Low mesh density for size. Subdivide for smoother surface.",
                 "LOW",
                 "mesh.print3d_apply_subdivision",
-                icon="MOD_SUBSURF"
+                icon="MOD_SUBSURF",
+                context=context,
+                reason="Low polygon density can cause faceting and print artifacts.",
+                evidence=f"Max dimension: {max_dim:.4f}m, Faces: {face_count}",
             )
 
     def _check_thin_walls(self, obj, context):
         props = context.scene.print3d_toolbox
-        thin_faces = _extract_report_count(props.report_thickness, "Thin Faces")
+        thin_faces = _metric_from_snapshot(props, "Thin Faces")
+        if thin_faces is None:
+            thin_faces = _extract_report_count(props.report_thickness, "Thin Faces")
         if thin_faces is None:
             add_suggestion(
                 "THICKNESS_CHECK",
                 "Run thickness analysis to verify minimum wall thickness.",
                 "LOW",
                 "mesh.print3d_check_thick",
-                icon="LINCURVE"
+                icon="LINCURVE",
+                context=context,
+                reason="Wall thickness data is missing for safe manufacturability checks.",
+                evidence="No thickness report available in current scene state.",
             )
             return
 
@@ -135,7 +247,10 @@ class MESH_OT_smart_advisor_analyze(Operator):
                 f"Detected {thin_faces} thin faces. Add Solidify to increase wall thickness.",
                 "MEDIUM",
                 "mesh.print3d_apply_solidify",
-                icon="MOD_SOLIDIFY"
+                icon="MOD_SOLIDIFY",
+                context=context,
+                reason="Thin walls are prone to breakage or failed slices.",
+                evidence=f"Thin Faces count: {thin_faces}",
             )
 
     def _check_assembly_clearance(self, context):
@@ -185,6 +300,9 @@ class MESH_OT_smart_advisor_analyze(Operator):
                 "HIGH",
                 "mesh.print3d_enable_contact_scaling",
                 icon="MOD_PHYSICS",
+                context=context,
+                reason="Auto-adjust requires contact scaling fallback for non-destructive correction.",
+                evidence=f"Conflicting pairs below tolerance: {violating_pairs}",
             )
 
         add_suggestion(
@@ -193,6 +311,9 @@ class MESH_OT_smart_advisor_analyze(Operator):
             "HIGH",
             "object.print3d_auto_clearance",
             icon="MOD_PHYSICS",
+            context=context,
+            reason="Clearance conflicts can prevent assembly fit after printing.",
+            evidence=f"Tolerance: {tolerance:.4f}m, Conflicting pairs: {violating_pairs}",
         )
 
 class MESH_OT_apply_stress_relief(Operator):

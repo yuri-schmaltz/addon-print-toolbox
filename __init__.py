@@ -12,6 +12,8 @@ else:
 
     from . import essentials, localization, operators, preferences, ui, draw_volume
 
+from .core.runtime import logger
+
 
 classes = essentials.get_classes((operators, preferences, ui))
 
@@ -21,7 +23,7 @@ def _safe_register_class(cls) -> None:
         bpy.utils.register_class(cls)
     except ValueError as exc:
         if "already registered" in str(exc):
-            print(f"Print3D Toolbox: Class already registered, skipping {cls.__name__}")
+            logger.info("Class already registered, skipping %s", cls.__name__)
             return
         raise
 
@@ -32,7 +34,7 @@ def _safe_unregister_class(cls) -> None:
     except RuntimeError as exc:
         if "missing bl_rna" in str(exc) or "not registered" in str(exc):
             return
-        print(f"Print3D Toolbox: Failed to unregister {cls.__name__}: {exc}")
+        logger.warning("Failed to unregister %s: %s", cls.__name__, exc)
 
 
 def register():

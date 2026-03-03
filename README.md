@@ -53,6 +53,15 @@ As configurações ficam em `Scene → Print 3D` e são usadas pelas operações
 ## Localização
 O add-on inclui traduções (`localization/*.po`) para múltiplos idiomas. O Blender seleciona automaticamente o idioma ativo e registra as cadeias ao registrar o add-on.
 
+## Teste automatizado (smoke)
+Requer Blender instalado e disponível no `PATH`.
+
+```bash
+blender --background --factory-startup --python tests/smoke_headless.py
+```
+
+O script valida registro do add-on, execução de análise, geração de snapshot, Advisor, export STL e limpeza de estado.
+
 ## Suporte e licença
 - Compatível com **Blender 4.2+** (veja `blender_manifest.toml`).
 - Licença **GPL-3.0-or-later**; autores listados no manifesto e cabeçalhos de arquivo.

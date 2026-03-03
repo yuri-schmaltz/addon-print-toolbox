@@ -230,7 +230,7 @@ class VIEW3D_PT_print3d_advisor(Sidebar, Panel):
         box.label(text="Design Suggestions", icon="LIGHTBULB_ON")
         box.operator("mesh.print3d_advisor_analyze", text="Analyze Mesh for DfAM", icon="NODETREE")
         
-        suggestions = advisor.get_suggestions()
+        suggestions = advisor.get_suggestions(context)
         
         if suggestions:
             layout.separator()
@@ -245,6 +245,10 @@ class VIEW3D_PT_print3d_advisor(Sidebar, Panel):
                 
                 row = sbox.row()
                 row.operator(sug["operator_id"], text="Apply Suggestion", icon="CHECKMARK")
+                if sug.get("reason"):
+                    sbox.label(text=f"Why: {sug['reason']}", icon="INFO")
+                if sug.get("evidence"):
+                    sbox.label(text=f"Evidence: {sug['evidence']}", icon="CON_TRACKTO")
         else:
             layout.label(text="Run analysis to see suggestions", icon="INFO")
 

@@ -7,6 +7,7 @@ import bpy
 from bpy.app.translations import pgettext_tip as tip_
 from bpy.props import FloatProperty, IntProperty
 from bpy.types import Operator
+from ..core.runtime import logger
 
 
 class MESH_OT_clean_non_manifold(Operator):
@@ -159,7 +160,7 @@ class MESH_OT_clean_non_manifold(Operator):
             iterations += 1
             
         if iterations == MAX_ITERATIONS:
-            print("Print3D Toolbox: Make Manifold reached maximum iterations (100) and aborted early to prevent hang.")
+            logger.warning("Make Manifold reached maximum iterations (100) and aborted early to prevent hang.")
 
     @staticmethod
     def select_non_manifold_verts(

@@ -9,6 +9,8 @@ from bpy.app.translations import pgettext_data as data_
 from bpy.app.translations import pgettext_tip as tip_
 from bpy.props import StringProperty
 from bpy.types import Image, Material, Object, Operator
+from ..core.compat import filtered_operator_kwargs, is_3mf_export_available, operator_exists
+from ..core.runtime import logger
 
 
 class EXPORT_SCENE_OT_export(Operator):
@@ -105,7 +107,7 @@ class EXPORT_SCENE_OT_export(Operator):
 
         # for formats that don't support images
         if path_mode == "COPY" and props.export_format in {"STL", "PLY"}:
-            _image_copy_guess(filepath, context.selected_objects)
+            _image_copy_guess(filepath, context.selected_objects, self.report)
 
         if "FINISHED" in ret:
             self.report({"INFO"}, tip_("Exported: {!r}").format(filepath))
@@ -240,7 +242,7 @@ def _image_get(mat: Material) -> Image | None:
             return base_color_tex.image
 
 
-def _image_copy_guess(filepath: str, objects: list[Object]) -> None:
+def _image_copy_guess(filepath: str, objects: list[Object], report=None) -> None:
     # 'filepath' is the path we are writing to.
     image = None
     mats = set()
@@ -265,14 +267,14 @@ def _image_copy_guess(filepath: str, objects: list[Object]) -> None:
             ext = os.path.splitext(imagepath)[1]
 
             imagepath_dst = filepath_noext + ext
-            print(f"copying texture: {imagepath!r} -> {imagepath_dst!r}")
+            logger.info("Copying texture %r -> %r", imagepath, imagepath_dst)
 
             try:
                 shutil.copy(imagepath, imagepath_dst)
             except Exception as exc:
-                print(f"Error copying texture: {exc}")
-                import traceback
-                traceback.print_exc()
+                if report is not None:
+                    report({"WARNING"}, f"Texture copy failed: {exc}")
+                logger.exception("Error copying texture during export")
 
 
 def _ensure_export_dir(filepath: str, report) -> bool:
@@ -285,37 +287,6 @@ def _ensure_export_dir(filepath: str, report) -> bool:
         return False
 
     return True
-
-
-def _operator_exists(module_name: str, op_name: str) -> bool:
-    if not hasattr(bpy.ops, module_name):
-        return False
-
-    submodule = getattr(bpy.ops, module_name)
-    if not hasattr(submodule, op_name):
-        return False
-
-    op = getattr(submodule, op_name)
-    try:
-        op.get_rna_type()
-    except (KeyError, AttributeError):
-        return False
-
-    return True
-
-
-def is_3mf_export_available() -> bool:
-    return _operator_exists("export_scene", "threemf") or _operator_exists("wm", "threemf_export")
-
-
-def _filtered_operator_kwargs(op, kwargs: dict) -> dict:
-    try:
-        rna = op.get_rna_type()
-        valid = {prop.identifier for prop in rna.properties}
-    except Exception:
-        return kwargs
-
-    return {key: value for key, value in kwargs.items() if key in valid}
 
 
 def _export_3mf(filepath: str, global_scale: float, props, report):
@@ -332,11 +303,11 @@ def _export_3mf(filepath: str, global_scale: float, props, report):
     }
 
     for module_name, op_name in (("export_scene", "threemf"), ("wm", "threemf_export")):
-        if not _operator_exists(module_name, op_name):
+        if not operator_exists(module_name, op_name):
             continue
 
         op = getattr(getattr(bpy.ops, module_name), op_name)
-        kwargs = _filtered_operator_kwargs(op, kwargs_common)
+        kwargs = filtered_operator_kwargs(op, kwargs_common)
         return op(**kwargs)
 
     report(

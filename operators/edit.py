@@ -14,6 +14,7 @@ import bpy
 from bpy.app.translations import pgettext_tip as tip_
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty
 from bpy.types import Operator
+from ..core.runtime import logger
 
 
 class MESH_OT_hollow(Operator):
@@ -249,7 +250,7 @@ class OBJECT_OT_align_xy(Operator):
 
         if len(skip_invalid) > 0:
             for name in skip_invalid:
-                print(tip_("Align to XY: Skipping object {}. Could not determine alignment normal").format(name))
+                logger.warning(tip_("Align to XY: Skipping object {}. Could not determine alignment normal").format(name))
             if len(skip_invalid) == 1:
                 self.report({"WARNING"}, tip_("Skipping object {}. Could not determine alignment normal").format(skip_invalid[0]))
             else:
